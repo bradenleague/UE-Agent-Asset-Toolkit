@@ -413,7 +413,7 @@ class AssetIndexer:
                                             "path": game_path,
                                             "name": Path(path).stem,
                                             "asset_type": summary.get("asset_type", "Unknown"),
-                                            "references": refs_data.get("refs", []),
+                                            "references": refs_data.get("refs") or [],
                                         })
                                 except json.JSONDecodeError:
                                     stats["errors"] += 1
@@ -1026,7 +1026,7 @@ class AssetIndexer:
                             fs_path = Path(data.get("path", ""))
                             game_path = self._fs_to_game_path(fs_path)
                             asset_name = fs_path.stem
-                            refs = data.get("refs", [])
+                            refs = data.get("refs") or []
 
                             chunks = self._create_chunks_from_json(
                                 data, game_path, asset_name, asset_type, refs
@@ -1095,11 +1095,11 @@ class AssetIndexer:
         chunks = []
 
         parent = data.get("parent", "")
-        events = data.get("events", [])
-        components = data.get("components", [])
-        variables = data.get("variables", [])
-        interfaces = data.get("interfaces", [])
-        functions_data = data.get("functions", [])
+        events = data.get("events") or []
+        components = data.get("components") or []
+        variables = data.get("variables") or []
+        interfaces = data.get("interfaces") or []
+        functions_data = data.get("functions") or []
 
         # Extract function names
         functions = [f.get("name", "") if isinstance(f, dict) else str(f) for f in functions_data]
@@ -1124,7 +1124,7 @@ class AssetIndexer:
             if isinstance(func_data, dict):
                 func_name = func_data.get("name", "")
                 flags = func_data.get("flags", "").split(",") if func_data.get("flags") else []
-                calls = func_data.get("calls", [])
+                calls = func_data.get("calls") or []
 
                 if func_name:
                     chunks.append(BlueprintGraphDoc(
@@ -1146,18 +1146,18 @@ class AssetIndexer:
         chunks = []
 
         widget_count = data.get("widget_count", 0)
-        widget_names = data.get("widget_names", [])
+        widget_names = data.get("widget_names") or []
 
         # Extract blueprint metadata (new fields from enhanced batch-widget)
         parent = data.get("parent", "")
-        interfaces = data.get("interfaces", [])
-        events = data.get("events", [])
-        variables = data.get("variables", [])
-        functions_data = data.get("functions", [])
+        interfaces = data.get("interfaces") or []
+        events = data.get("events") or []
+        variables = data.get("variables") or []
+        functions_data = data.get("functions") or []
         functions = [f.get("name", "") if isinstance(f, dict) else str(f) for f in functions_data]
 
         # Build hierarchy text from widgets list
-        widgets = data.get("widgets", [])
+        widgets = data.get("widgets") or []
         hierarchy_parts = []
         for w in widgets[:20]:  # Limit to first 20
             w_type = w.get("type", "Widget") if isinstance(w, dict) else "Widget"
@@ -1232,8 +1232,8 @@ class AssetIndexer:
         """Create chunks from batch-datatable JSON output."""
         row_struct = data.get("row_struct", "Unknown")
         row_count = data.get("row_count", 0)
-        columns = data.get("columns", [])
-        sample_keys = data.get("sample_keys", [])
+        columns = data.get("columns") or []
+        sample_keys = data.get("sample_keys") or []
 
         # Build text description
         text = f"DataTable {asset_name} with struct {row_struct}. {row_count} rows. "
