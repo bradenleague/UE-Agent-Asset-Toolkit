@@ -119,8 +119,8 @@ Two-tier architecture:
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  MCP Server (Python)                                        │
-│  - unreal_search: FTS + vector search on {project}.db      │
-│  - inspect_asset: calls AssetParser.exe                    │
+│  - unreal_search: FTS + vector search on {project}.db       │
+│  - inspect_asset: calls AssetParser.exe                     │
 └─────────────────────────────────────────────────────────────┘
                      │                    │
                      ▼                    ▼
