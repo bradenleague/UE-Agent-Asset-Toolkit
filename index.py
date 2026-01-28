@@ -172,6 +172,51 @@ def cmd_status(args):
                 print(f"    {asset_type}: {count}")
 
 
+def cmd_rebuild_fts(args):
+    """Rebuild FTS5 index to fix corruption."""
+    import tools
+    from pathlib import Path
+    from knowledge_index import KnowledgeStore
+
+    project_name = args.project or tools.get_active_project_name()
+    if not project_name:
+        print("No project configured.")
+        print("Add a project with: python index.py add /path/to/Project.uproject")
+        sys.exit(1)
+
+    db_path = Path(tools.get_project_db_path(project_name))
+    if not db_path.exists():
+        print(f"Index not found for project '{project_name}'")
+        print(f"Expected at: {db_path}")
+        sys.exit(1)
+
+    print(f"Rebuilding FTS5 index for: {project_name}")
+    print(f"Database: {db_path}")
+    print()
+
+    store = KnowledgeStore(db_path)
+    conn = store._get_connection()
+
+    try:
+        # Rebuild FTS5 index
+        print("Running FTS5 rebuild...")
+        conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('rebuild')")
+        conn.commit()
+        print("Done!")
+        print()
+
+        # Verify integrity
+        print("Verifying FTS5 integrity...")
+        result = conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('integrity-check')").fetchall()
+        print("Integrity check passed!")
+
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    finally:
+        conn.close()
+
+
 def cmd_index(args):
     """Run indexing."""
     import tools
@@ -349,7 +394,10 @@ def cmd_index(args):
     if force_reindex:
         print()
         print("Rebuilding FTS5 index...")
-        store._get_connection().execute("INSERT INTO docs_fts(docs_fts) VALUES('rebuild')")
+        conn = store._get_connection()
+        conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('rebuild')")
+        conn.commit()
+        conn.close()
         print("  Done")
 
 
@@ -367,8 +415,9 @@ Indexing Options:
   --all                   Full hybrid index (lightweight + semantic)
   --quick                 High-value types only (fast)
   --source                C++ source files in Source/ and Plugins/
-  --plugins               Include plugin Content folders (Plugins/*/Content)
+  --plugins               Include plugin Content folders (Plugins/*/Content, Plugins/GameFeatures/*/Content)
   --embed                 Generate sentence-transformer embeddings (slower, better semantic search)
+  --rebuild-fts           Fix FTS5 corruption ("missing row X from content table" errors)
   --status                Show detailed index statistics
   --project <name>        Override active project for this command
 
@@ -377,9 +426,10 @@ Examples:
   python index.py list
   python index.py use lyra
   python index.py --all
-  python index.py --all --plugins         # Include Game Feature plugins
+  python index.py --all --plugins         # Include Game Feature plugins (ShooterCore, TopDownArena, etc.)
   python index.py --all --embed           # With embeddings for semantic search
   python index.py --all --project shootergame
+  python index.py --rebuild-fts           # Fix corrupted FTS5 index
 """
     )
 
@@ -406,6 +456,7 @@ Examples:
     parser.add_argument("--embed", action="store_true", help="Generate embeddings for semantic search (requires sentence-transformers)")
     parser.add_argument("--path", help="Only index assets under this path (e.g., /Game/UI)")
     parser.add_argument("--force", action="store_true", help="Force re-index even if unchanged (bypass fingerprint check)")
+    parser.add_argument("--rebuild-fts", action="store_true", help="Rebuild FTS5 index to fix corruption (missing row errors)")
     parser.add_argument("--status", action="store_true", help="Show detailed index statistics")
     parser.add_argument("--project", help="Override active project for this command")
 
@@ -418,6 +469,8 @@ Examples:
         cmd_use(args)
     elif args.command == "list":
         cmd_list(args)
+    elif getattr(args, 'rebuild_fts', False):
+        cmd_rebuild_fts(args)
     elif args.all or args.quick or args.source:
         cmd_index(args)
     else:

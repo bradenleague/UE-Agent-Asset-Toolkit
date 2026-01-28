@@ -33,7 +33,7 @@ from mcp.types import Tool, TextContent
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from tools import PROJECT, inspect_asset as _raw_inspect, get_project_db_path, get_active_project_name
+from tools import PROJECT, inspect_asset as _raw_inspect, get_project_db_path, get_active_project_name, get_plugin_paths
 
 # Create the MCP server
 server = Server("unreal-asset-tools")
@@ -307,6 +307,22 @@ def unreal_search(
 # Tool: inspect_asset
 # =============================================================================
 
+def _is_valid_asset_path(path: str) -> bool:
+    """Check if a path is a valid asset path (main content or plugin)."""
+    if path.startswith("/Game/"):
+        return True
+
+    # Check for plugin paths (e.g., /ShooterCore/, /LyraExampleContent/)
+    if path.startswith("/") and not path.startswith("/Script/"):
+        parts = path.split("/")
+        if len(parts) >= 2:
+            mount_point = parts[1]
+            plugin_paths = get_plugin_paths()
+            return mount_point in plugin_paths
+
+    return False
+
+
 def inspect_asset(
     path_or_query: str,
     fuzzy: bool = False,
@@ -315,7 +331,7 @@ def inspect_asset(
     Get detailed structured data about a specific asset.
 
     Args:
-        path_or_query: Asset path (/Game/...) or search query if fuzzy=True
+        path_or_query: Asset path (/Game/..., /PluginName/...) or search query if fuzzy=True
         fuzzy: If True, search for the asset first, then inspect top match
 
     Returns:
@@ -324,7 +340,7 @@ def inspect_asset(
     asset_path = path_or_query
     search_result = None
 
-    if fuzzy or not path_or_query.startswith("/Game/"):
+    if fuzzy or not _is_valid_asset_path(path_or_query):
         # Search for the asset first - try name search, fall back to semantic
         search = unreal_search(path_or_query, search_type="name", limit=1)
         if not search["results"]:
