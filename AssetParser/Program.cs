@@ -1,5 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
+using CUE4Parse.UE4.AssetRegistry;
+using CUE4Parse.UE4.Readers;
 using UAssetAPI;
 using UAssetAPI.ExportTypes;
 using UAssetAPI.Kismet.Bytecode;
@@ -210,6 +212,10 @@ if (args.Length < 2)
     Console.WriteLine("  batch-widget <list_file>     - Batch widget parsing, output JSONL");
     Console.WriteLine("  batch-material <list_file>   - Batch material parsing, output JSONL");
     Console.WriteLine("  batch-datatable <list_file>  - Batch datatable parsing, output JSONL");
+    Console.WriteLine("  batch-fast <list_file>       - Fast parallel scan (filename detection only)");
+    Console.WriteLine();
+    Console.WriteLine("Fast Index Commands (CUE4Parse):");
+    Console.WriteLine("  registry <path>              - Parse CachedAssetRegistry.bin, output JSONL");
     Console.WriteLine();
     Console.WriteLine("Options:");
     Console.WriteLine("  --version <ver>   - Engine version (e.g., UE5_3, UE5_4, UE5_7)");
@@ -232,6 +238,32 @@ for (int i = 2; i < args.Length; i++)
             engineVersion = ver;
         i++;
     }
+}
+
+// Handle registry command separately (uses CUE4Parse, not UAssetAPI)
+if (command == "registry")
+{
+    var registryPath = assetPath;
+    if (!File.Exists(registryPath))
+    {
+        Console.WriteLine(JsonSerializer.Serialize(new { error = $"Registry file not found: {registryPath}" }));
+        return 1;
+    }
+
+    try
+    {
+        ParseAssetRegistry(registryPath);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(new {
+            error = ex.Message,
+            type = ex.GetType().Name,
+            hint = "This may be an unsupported registry format. The registry command expects CachedAssetRegistry.bin from a cooked/packaged build, not editor cache files like CachedAssetRegistry_0.bin"
+        }));
+        return 1;
+    }
+    return 0;
 }
 
 // Handle batch commands separately (they read from a file list)
@@ -267,6 +299,9 @@ if (command.StartsWith("batch-"))
             break;
         case "batch-datatable":
             BatchDataTable(paths, engineVersion);
+            break;
+        case "batch-fast":
+            BatchFastSummary(paths);
             break;
         default:
             Console.WriteLine(JsonSerializer.Serialize(new { error = $"Unknown batch command: {command}" }));
@@ -3745,4 +3780,141 @@ List<string> CollectAssetRefs(UAsset asset)
     }
 
     return assetRefs.OrderBy(r => r).ToList();
+}
+
+// ============================================================================
+// ASSET REGISTRY - Fast bulk parsing via CUE4Parse
+// ============================================================================
+void ParseAssetRegistry(string registryPath)
+{
+    var bytes = File.ReadAllBytes(registryPath);
+    using var archive = new FByteArchive(Path.GetFileName(registryPath), bytes);
+
+    var registry = new FAssetRegistryState(archive);
+
+    var stats = new Dictionary<string, int>();
+
+    // Output each asset as JSONL for streaming processing
+    foreach (var assetData in registry.PreallocatedAssetDataBuffers)
+    {
+        var assetClass = assetData.AssetClass.Text ?? "Unknown";
+
+        // Track stats
+        if (!stats.ContainsKey(assetClass))
+            stats[assetClass] = 0;
+        stats[assetClass]++;
+
+        // Build tags dictionary
+        var tags = new Dictionary<string, string>();
+        if (assetData.TagsAndValues != null)
+        {
+            foreach (var kvp in assetData.TagsAndValues)
+            {
+                tags[kvp.Key.Text ?? ""] = kvp.Value ?? "";
+            }
+        }
+
+        Console.WriteLine(JsonSerializer.Serialize(new {
+            package_name = assetData.PackageName.Text,
+            package_path = assetData.PackagePath.Text,
+            asset_name = assetData.AssetName.Text,
+            asset_class = assetClass,
+            object_path = assetData.ObjectPath,
+            tags = tags.Count > 0 ? tags : null,
+            chunk_ids = assetData.ChunkIDs.Length > 0 ? assetData.ChunkIDs : null
+        }));
+    }
+
+    // Output dependency info to stderr
+    Console.Error.WriteLine($"Parsed {registry.PreallocatedAssetDataBuffers.Length} assets");
+    Console.Error.WriteLine($"Dependencies: {registry.PreallocatedDependsNodeDataBuffers.Length} nodes");
+    Console.Error.WriteLine($"Packages: {registry.PreallocatedPackageDataBuffers.Length}");
+    Console.Error.WriteLine("Asset types:");
+    foreach (var kvp in stats.OrderByDescending(x => x.Value).Take(20))
+    {
+        Console.Error.WriteLine($"  {kvp.Key}: {kvp.Value}");
+    }
+}
+
+// ============================================================================
+// BATCH FAST - Parallel lightweight scanning (filename detection only)
+// ============================================================================
+void BatchFastSummary(List<string> paths)
+{
+    var options = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount };
+    var results = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+    Parallel.ForEach(paths, options, path =>
+    {
+        try
+        {
+            var resolvedPath = path;
+            if (!File.Exists(resolvedPath) && File.Exists(resolvedPath + ".uasset"))
+                resolvedPath = resolvedPath + ".uasset";
+
+            if (!File.Exists(resolvedPath))
+            {
+                results.Add(JsonSerializer.Serialize(new {
+                    path = path,
+                    error = "File not found"
+                }));
+                return;
+            }
+
+            // Just read magic to verify it's a valid .uasset
+            using var fs = new FileStream(resolvedPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
+            using var reader = new BinaryReader(fs);
+
+            var magic = reader.ReadUInt32();
+            if (magic != 0x9E2A83C1)
+            {
+                results.Add(JsonSerializer.Serialize(new {
+                    path = path,
+                    error = "Invalid magic - not a .uasset file"
+                }));
+                return;
+            }
+
+            // Get file size for basic stats
+            var fileSize = fs.Length;
+
+            // Detect asset type from filename (fast and reliable)
+            var fileName = Path.GetFileNameWithoutExtension(resolvedPath);
+            var assetType = DetectAssetTypeFromName(fileName);
+
+            results.Add(JsonSerializer.Serialize(new {
+                path = path,
+                name = fileName,
+                asset_type = assetType,
+                size = fileSize
+            }));
+        }
+        catch (Exception ex)
+        {
+            results.Add(JsonSerializer.Serialize(new {
+                path = path,
+                error = ex.Message
+            }));
+        }
+    });
+
+    // Output all results
+    foreach (var result in results)
+    {
+        Console.WriteLine(result);
+    }
+}
+
+// Fast asset type detection from filename only
+string DetectAssetTypeFromName(string fileName)
+{
+    // Use the naming prefixes table
+    foreach (var kvp in NamingPrefixes)
+    {
+        if (fileName.StartsWith(kvp.Key, StringComparison.OrdinalIgnoreCase))
+        {
+            return kvp.Value;
+        }
+    }
+    return "Unknown";
 }
