@@ -290,27 +290,43 @@ class AssetIndexer:
         if not self.parser_path or not self.parser_path.exists():
             return {"error": "AssetParser not found"}
 
-        # Collect assets from all content roots
+        # Collect assets from all content roots with progress feedback
         assets = []
+
+        def scan_with_progress(path: Path, label: str) -> list:
+            """Scan directory with periodic progress updates."""
+            found = []
+            last_update = 0
+            for asset in path.rglob("*.uasset"):
+                found.append(asset)
+                # Update every 1000 files
+                if len(found) - last_update >= 1000:
+                    sys.stderr.write(f"\r  Scanning {label}... {len(found):,} files found")
+                    sys.stderr.flush()
+                    last_update = len(found)
+            # Clear the line and print final count
+            if last_update > 0:
+                sys.stderr.write("\r" + " " * 60 + "\r")
+            return found
 
         # Main content folder
         fs_path = self._game_path_to_fs(folder_path)
         if fs_path.exists():
             print(f"Scanning {fs_path}...", file=sys.stderr)
-            main_assets = list(fs_path.rglob("*.uasset"))
+            main_assets = scan_with_progress(fs_path, "main content")
             assets.extend(main_assets)
-            print(f"Found {len(main_assets)} assets in main content", file=sys.stderr)
+            print(f"Found {len(main_assets):,} assets in main content", file=sys.stderr)
 
         # Plugin content folders
         for mount_point, plugin_content in self.plugin_paths.items():
             if plugin_content.exists():
                 print(f"Scanning {plugin_content} ({mount_point})...", file=sys.stderr)
-                plugin_assets = list(plugin_content.rglob("*.uasset"))
+                plugin_assets = scan_with_progress(plugin_content, mount_point)
                 assets.extend(plugin_assets)
-                print(f"Found {len(plugin_assets)} assets in {mount_point}", file=sys.stderr)
+                print(f"Found {len(plugin_assets):,} assets in {mount_point}", file=sys.stderr)
 
         stats["total_found"] = len(assets)
-        print(f"Total: {len(assets)} assets", file=sys.stderr)
+        print(f"Total: {len(assets):,} assets", file=sys.stderr)
 
         if not assets:
             return stats
