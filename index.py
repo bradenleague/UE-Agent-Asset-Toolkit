@@ -350,7 +350,11 @@ def cmd_index(args):
 
     def batch_progress(status_msg, current, total):
         now = time_module.time()
-        phase = status_msg.split(':')[0] if ':' in status_msg else status_msg
+        # Extract phase name, stripping batch numbers (e.g., "Fast-classifying batch 1" -> "Fast-classifying")
+        raw_phase = status_msg.split(':')[0] if ':' in status_msg else status_msg
+        # Remove " batch N" suffix to group all batches of same type
+        import re
+        phase = re.sub(r' batch \d+$', '', raw_phase)
 
         # Track phase transitions with timestamps
         if phase != batch_state['last_phase']:
