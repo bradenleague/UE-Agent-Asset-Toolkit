@@ -71,6 +71,18 @@ class AssetIndexer:
     # - Includes: Animation, Texture, StaticMesh, SkeletalMesh, Sound, OFPA files, Unknown, etc.
     # - Enables: "where is BP_X used?", "what's in Main_Menu level?", path lookups
 
+    # Asset types that don't benefit from reference extraction
+    # These are standalone assets where refs aren't useful for search
+    # They'll be stored with path/name/type only (from Phase 1), skipping batch-refs
+    SKIP_REFS_TYPES = {
+        "Sound",            # Audio files - standalone, often large
+        "Texture",          # Images - standalone
+        "StaticMesh",       # 3D models - material refs not critical
+        "SkeletalMesh",     # Rigged models - material/skeleton refs not critical
+        "Animation",        # All anim types (montage, sequence, skeleton, blend space)
+        "PhysicsAsset",     # Physics collision data
+    }
+
     def __init__(
         self,
         store: KnowledgeStore,
@@ -393,25 +405,58 @@ class AssetIndexer:
             print(f"Filtered to {len(filtered_summaries)} assets matching types: {type_filter}", file=sys.stderr)
             asset_summaries = filtered_summaries
 
-        # Phase 2: Batch references for lightweight assets (everything NOT semantic)
-        # This includes: textures, meshes, animations, sounds, OFPA files, Unknown, etc.
+        # Phase 2: Lightweight assets (everything NOT semantic)
+        # Split into: skip-refs (stored directly) and needs-refs (run batch-refs)
         if profile in ("hybrid", "lightweight-only"):
-            lightweight_paths = [
-                p for p, s in asset_summaries.items()
-                if s.get("asset_type", "Unknown") not in self.SEMANTIC_TYPES
-            ]
+            # Separate assets by whether they need reference extraction
+            skip_refs_assets = []
+            needs_refs_paths = []
 
-            if lightweight_paths:
-                print(f"Phase 2: Indexing {len(lightweight_paths)} lightweight assets...", file=sys.stderr)
+            for p, s in asset_summaries.items():
+                asset_type = s.get("asset_type", "Unknown")
+                if asset_type in self.SEMANTIC_TYPES:
+                    continue  # Will be handled in Phase 3
 
-                for batch_start in range(0, len(lightweight_paths), batch_size):
-                    batch = lightweight_paths[batch_start:batch_start + batch_size]
+                if asset_type in self.SKIP_REFS_TYPES:
+                    # Store directly from Phase 1 data (no refs needed)
+                    game_path = self._fs_to_game_path(Path(p))
+                    skip_refs_assets.append({
+                        "path": game_path,
+                        "name": Path(p).stem,
+                        "asset_type": asset_type,
+                        "references": [],
+                    })
+                else:
+                    # Need refs for OFPA, Unknown, and other types
+                    needs_refs_paths.append(p)
+
+            # Store skip-refs assets directly (fast - no parsing needed)
+            if skip_refs_assets:
+                print(f"Phase 2a: Storing {len(skip_refs_assets)} assets (no refs needed)...", file=sys.stderr)
+                # Batch insert in chunks
+                for batch_start in range(0, len(skip_refs_assets), batch_size):
+                    batch = skip_refs_assets[batch_start:batch_start + batch_size]
+                    self.store.upsert_lightweight_batch(batch)
+                    stats["lightweight_indexed"] += len(batch)
+                    if progress_callback:
+                        progress_callback(
+                            f"Storing batch {batch_start // batch_size + 1}",
+                            batch_start,
+                            len(skip_refs_assets)
+                        )
+
+            # Process assets that need reference extraction
+            if needs_refs_paths:
+                print(f"Phase 2b: Extracting refs from {len(needs_refs_paths)} assets...", file=sys.stderr)
+
+                for batch_start in range(0, len(needs_refs_paths), batch_size):
+                    batch = needs_refs_paths[batch_start:batch_start + batch_size]
 
                     if progress_callback:
                         progress_callback(
-                            f"Lightweight batch {batch_start // batch_size + 1}",
-                            batch_start,
-                            len(lightweight_paths)
+                            f"Refs batch {batch_start // batch_size + 1}",
+                            len(skip_refs_assets) + batch_start,
+                            len(skip_refs_assets) + len(needs_refs_paths)
                         )
 
                     # Write batch to temp file
@@ -454,10 +499,13 @@ class AssetIndexer:
                             if batch_assets:
                                 self.store.upsert_lightweight_batch(batch_assets)
                                 stats["lightweight_indexed"] += len(batch_assets)
+                    except subprocess.TimeoutExpired:
+                        print(f"\nWarning: Batch timed out, skipping {len(batch)} assets", file=sys.stderr)
+                        stats["errors"] += len(batch)
                     finally:
                         os.unlink(batch_file)
 
-                print(f"Indexed {stats['lightweight_indexed']} lightweight assets", file=sys.stderr)
+            print(f"Indexed {stats['lightweight_indexed']} lightweight assets", file=sys.stderr)
 
         # Phase 3: Batch semantic indexing for high-value types
         # Uses batch-blueprint, batch-widget, batch-material, batch-datatable for ~100x speedup
