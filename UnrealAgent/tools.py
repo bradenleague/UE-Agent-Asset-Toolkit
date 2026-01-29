@@ -1078,7 +1078,7 @@ if __name__ == "__main__":
         if not db_path.exists():
             print("Semantic index not found.")
             print(f"Expected at: {db_path}")
-            print("Run 'python tools.py --index' to build it.")
+            print("Run 'python index.py --all' to build it.")
             sys.exit(1)
 
         from knowledge_index import KnowledgeStore
@@ -1118,81 +1118,15 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if arg == "--index":
-        from pathlib import Path
-
-        # Get content path from config or auto-detect
-        content_path = None
-        if PROJECT:
-            content_path = Path(os.path.dirname(PROJECT)) / "Content"
-
-        if not content_path or not content_path.exists():
-            print("ERROR: Could not find Content folder")
-            print("Make sure config.json is set up or a .uproject file is in the parent directory")
-            sys.exit(1)
-
-        db_path = Path(get_project_db_path())
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        from knowledge_index import KnowledgeStore, AssetIndexer
-        print(f"Building semantic index...")
-        print(f"  Content: {content_path}")
-        print(f"  Database: {db_path}")
-        print()
-
-        store = KnowledgeStore(db_path)
-        indexer = AssetIndexer(store, content_path)
-
-        # Progress tracking with ETA
-        import time as time_module
-        spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-        progress_state = {'idx': 0, 'start_time': time_module.time(), 'last_update': 0}
-
-
-        def progress(path, current, total):
-            # Get asset name from path
-            asset_name = path.split("/")[-1] if "/" in path else path
-            if len(asset_name) > 35:
-                asset_name = asset_name[:32] + "..."
-
-            # Calculate ETA
-            elapsed = time_module.time() - progress_state['start_time']
-            eta_str = ""
-            if current > 0 and elapsed > 2:  # Wait 2s before showing ETA
-                rate = current / elapsed
-                remaining = total - current
-                if rate > 0:
-                    eta_seconds = remaining / rate
-                    eta_str = f" - ETA: {format_eta(eta_seconds)}"
-
-            # Update progress line (overwrite previous)
-            spinner = spinner_chars[progress_state['idx'] % len(spinner_chars)]
-            progress_state['idx'] += 1
-            pct = int(100 * current / total) if total > 0 else 0
-            sys.stdout.write(f"\r  {spinner} [{current}/{total}] {pct}%{eta_str} - {asset_name:<30}")
-            sys.stdout.flush()
-
-        stats = indexer.index_folder("/Game", progress_callback=progress)
-
-        # Clear the progress line and show results
-        sys.stdout.write("\r" + " " * 80 + "\r")
-        print()
-        print("Indexing complete:")
-        print(f"  Total found: {stats.get('total_found', 0)}")
-        print(f"  Indexed: {stats.get('indexed', 0)}")
-        print(f"  Unchanged: {stats.get('unchanged', 0)}")
-        print(f"  Errors: {stats.get('errors', 0)}")
-        if stats.get('by_type'):
-            print()
-            print("By type:")
-            for asset_type, count in sorted(stats['by_type'].items()):
-                print(f"  {asset_type}: {count}")
-        sys.exit(0)
+        print("Deprecated: --index is no longer supported.")
+        print("Use: python tools.py --index-batch --mode full")
+        sys.exit(1)
 
     if arg == "--index-batch":
         from pathlib import Path
 
         # Parse arguments
-        profile = "hybrid"  # default
+        mode = "full"  # default
         use_embeddings = "--embed" in sys.argv
         index_path = "/Game"  # default
 
@@ -1204,19 +1138,33 @@ if __name__ == "__main__":
                     index_path = "/Game/" + index_path.lstrip("/")
                 break
 
-        # Find profile arg (first non-flag arg after --index-batch)
-        for i, a in enumerate(sys.argv[2:], start=2):
-            if not a.startswith("-") and a != index_path:
-                profile = a.lower()
-                if profile not in ("quick", "hybrid", "lightweight-only", "semantic-only"):
-                    print(f"ERROR: Unknown profile '{profile}'")
-                    print("Available profiles:")
-                    print("  quick           - Index high-value types only (~10 min)")
-                    print("  hybrid          - Full coverage with two-tier strategy (~3-4 hours)")
-                    print("  lightweight-only - Path + refs only, no semantic search (~20 min)")
-                    print("  semantic-only   - Semantic types only, skip lightweight (~2-4 hours)")
-                    sys.exit(1)
-                break
+        # Find --mode argument or legacy positional profile
+        if "--mode" in sys.argv:
+            try:
+                mode = sys.argv[sys.argv.index("--mode") + 1].lower()
+            except IndexError:
+                print("ERROR: --mode requires a value")
+                sys.exit(1)
+        else:
+            for i, a in enumerate(sys.argv[2:], start=2):
+                if not a.startswith("-") and a != index_path:
+                    mode = a.lower()
+                    print("WARNING: Positional profile is deprecated. Use --mode <full|quick|lightweight>.")
+                    break
+
+        if mode not in ("quick", "full", "lightweight"):
+            print(f"ERROR: Unknown mode '{mode}'")
+            print("Available modes:")
+            print("  full         - Full coverage with two-tier strategy (~3-4 hours)")
+            print("  quick        - Index high-value types only (~10 min)")
+            print("  lightweight  - Path + refs only, no semantic search (~20 min)")
+            sys.exit(1)
+
+        profile = {
+            "full": "hybrid",
+            "quick": "quick",
+            "lightweight": "lightweight-only",
+        }[mode]
 
         # Get content path from config or auto-detect
         content_path = None
@@ -1232,17 +1180,19 @@ if __name__ == "__main__":
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         from knowledge_index import KnowledgeStore, AssetIndexer
-        print(f"Building semantic index (batch mode, profile: {profile})...")
+        print(f"Building semantic index (batch mode, mode: {mode})...")
         print(f"  Content: {content_path}")
         print(f"  Database: {db_path}")
         print()
 
-        if profile == "quick":
+        if mode == "quick":
             print("Quick profile: Indexing WidgetBlueprint, DataTable, MaterialInstance only")
-        elif profile == "hybrid":
-            print("Hybrid profile: Full coverage with two-tier strategy")
+        elif mode == "full":
+            print("Full mode: Full coverage with two-tier strategy")
             print("  - Lightweight (path+refs): Textures, Meshes, Animations, OFPA")
             print("  - Semantic (full parse): Widgets, Blueprints, Materials")
+        elif mode == "lightweight":
+            print("Lightweight mode: Path + refs only (skip semantic parsing)")
 
         if index_path != "/Game":
             print(f"  Path filter: {index_path}")
@@ -1309,20 +1259,13 @@ if __name__ == "__main__":
                 sys.stdout.write(f"\r  {status_msg}...          ")
             sys.stdout.flush()
 
-        # Quick profile uses type filter on legacy method
-        if profile == "quick":
-            stats = indexer.index_folder(
-                index_path,
-                type_filter=["WidgetBlueprint", "DataTable", "MaterialInstance"],
-                progress_callback=lambda p, c, t: batch_progress(f"Indexing {p.split('/')[-1][:30]}", c, t)
-            )
-        else:
-            stats = indexer.index_folder_batch(
-                index_path,
-                batch_size=500,  # Smaller batches for better progress feedback & OneDrive compatibility
-                progress_callback=batch_progress,
-                profile=profile,
-            )
+        stats = indexer.index_folder_batch(
+            index_path,
+            batch_size=500,  # Smaller batches for better progress feedback & OneDrive compatibility
+            progress_callback=batch_progress,
+            profile=profile,
+            type_filter=["WidgetBlueprint", "DataTable", "MaterialInstance"] if profile == "quick" else None,
+        )
 
         # Clear the progress line and show results
         sys.stdout.write("\r" + " " * 80 + "\r")
@@ -1436,83 +1379,9 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if arg == "--index-all":
-        from pathlib import Path
-
-        if not PROJECT:
-            print("ERROR: No project configured")
-            print("Make sure config.json is set up or a .uproject file is in the parent directory")
-            sys.exit(1)
-
-        content_path = Path(os.path.dirname(PROJECT)) / "Content"
-        project_root = Path(os.path.dirname(PROJECT))
-
-        db_path = Path(get_project_db_path())
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        from knowledge_index import KnowledgeStore, AssetIndexer, SourceIndexer
-        print(f"Building full semantic index (assets + source)...")
-        print(f"  Project: {project_root}")
-        print(f"  Database: {db_path}")
-        print()
-
-        store = KnowledgeStore(db_path)
-
-        # Progress tracking with ETA
-        import time as time_module
-        spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-        progress_state = {'idx': 0, 'start_time': None}
-
-
-        def progress(path, current, total):
-            now = time_module.time()
-            if progress_state['start_time'] is None:
-                progress_state['start_time'] = now
-
-            name = path.split("/")[-1] if "/" in path else path
-            if len(name) > 35:
-                name = name[:32] + "..."
-
-            # Calculate ETA
-            elapsed = now - progress_state['start_time']
-            eta_str = ""
-            if current > 0 and elapsed > 2:
-                rate = current / elapsed
-                remaining = total - current
-                if rate > 0:
-                    eta_seconds = remaining / rate
-                    eta_str = f" - ETA: {format_eta(eta_seconds)}"
-
-            spinner = spinner_chars[progress_state['idx'] % len(spinner_chars)]
-            progress_state['idx'] += 1
-            pct = int(100 * current / total) if total > 0 else 0
-            sys.stdout.write(f"\r  {spinner} [{current}/{total}] {pct}%{eta_str} - {name:<30}")
-            sys.stdout.flush()
-
-        # Index assets
-        if content_path.exists():
-            print("Indexing assets...")
-            asset_indexer = AssetIndexer(store, content_path)
-            asset_stats = asset_indexer.index_folder("/Game", progress_callback=progress)
-            sys.stdout.write("\r" + " " * 80 + "\r")
-            print(f"  Assets: {asset_stats.get('indexed', 0)} indexed, {asset_stats.get('unchanged', 0)} unchanged")
-        else:
-            print("  Content/ not found, skipping assets")
-
-        # Index source
-        source_path = project_root / "Source"
-        plugins_path = project_root / "Plugins"
-        if source_path.exists() or plugins_path.exists():
-            print("Indexing C++ source...")
-            source_indexer = SourceIndexer(store, PROJECT)
-            source_stats = source_indexer.index_all(progress_callback=progress)
-            sys.stdout.write("\r" + " " * 80 + "\r")
-            print(f"  Source: {source_stats.get('indexed', 0)} indexed, {source_stats.get('unchanged', 0)} unchanged")
-        else:
-            print("  Source/Plugins not found, skipping C++ source")
-
-        print()
-        print("Full index build complete. Run --index-status to see summary.")
-        sys.exit(0)
+        print("Deprecated: --index-all is no longer supported.")
+        print("Use: python index.py --all (assets) and python index.py --source (C++)")
+        sys.exit(1)
 
     # Configure - either by name or direct path
     try:
