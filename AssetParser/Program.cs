@@ -2615,6 +2615,114 @@ void AnalyzeParameters(UAsset asset, KismetExpression[]? parameters,
     }
 }
 
+// ============================================================================
+// CONTROL FLOW ANALYSIS - Extract control flow summary from bytecode
+// ============================================================================
+object AnalyzeControlFlow(KismetExpression[]? bytecode)
+{
+    if (bytecode == null || bytecode.Length == 0)
+        return null;
+
+    int branchCount = 0;
+    int switchCount = 0;
+    bool hasReturn = false;
+
+    foreach (var expr in bytecode)
+    {
+        CountControlFlowExpressions(expr, ref branchCount, ref switchCount, ref hasReturn);
+    }
+
+    bool hasBranches = branchCount > 0 || switchCount > 0;
+
+    // Determine complexity
+    // Low: 0-2 branches, Medium: 3-5, High: 6+
+    int totalBranches = branchCount + switchCount;
+    string complexity = totalBranches switch
+    {
+        0 => "none",
+        <= 2 => "low",
+        <= 5 => "medium",
+        _ => "high"
+    };
+
+    return new
+    {
+        has_branches = hasBranches,
+        has_loops = false,  // Loop detection deferred - requires back-edge analysis
+        branch_count = branchCount,
+        switch_count = switchCount,
+        complexity = complexity
+    };
+}
+
+void CountControlFlowExpressions(KismetExpression expr, ref int branchCount, ref int switchCount, ref bool hasReturn)
+{
+    if (expr == null) return;
+
+    switch (expr)
+    {
+        // Conditional branches
+        case EX_JumpIfNot jumpIfNot:
+            branchCount++;
+            if (jumpIfNot.BooleanExpression != null)
+                CountControlFlowExpressions(jumpIfNot.BooleanExpression, ref branchCount, ref switchCount, ref hasReturn);
+            break;
+
+        // Switch statements
+        case EX_SwitchValue switchVal:
+            switchCount++;
+            if (switchVal.IndexTerm != null)
+                CountControlFlowExpressions(switchVal.IndexTerm, ref branchCount, ref switchCount, ref hasReturn);
+            if (switchVal.DefaultTerm != null)
+                CountControlFlowExpressions(switchVal.DefaultTerm, ref branchCount, ref switchCount, ref hasReturn);
+            if (switchVal.Cases != null)
+            {
+                foreach (var c in switchVal.Cases)
+                {
+                    if (c.CaseIndexValueTerm != null)
+                        CountControlFlowExpressions(c.CaseIndexValueTerm, ref branchCount, ref switchCount, ref hasReturn);
+                    if (c.CaseTerm != null)
+                        CountControlFlowExpressions(c.CaseTerm, ref branchCount, ref switchCount, ref hasReturn);
+                }
+            }
+            break;
+
+        // Return statements
+        case EX_Return returnExpr:
+            hasReturn = true;
+            if (returnExpr.ReturnExpression != null)
+                CountControlFlowExpressions(returnExpr.ReturnExpression, ref branchCount, ref switchCount, ref hasReturn);
+            break;
+
+        // Recurse into nested expressions
+        // Note: EX_Context_FailSilent extends EX_Context, so subclass must come first
+        case EX_Context_FailSilent contextFail:
+            if (contextFail.ContextExpression != null)
+                CountControlFlowExpressions(contextFail.ContextExpression, ref branchCount, ref switchCount, ref hasReturn);
+            break;
+
+        case EX_Context context:
+            if (context.ContextExpression != null)
+                CountControlFlowExpressions(context.ContextExpression, ref branchCount, ref switchCount, ref hasReturn);
+            break;
+
+        case EX_Let letExpr:
+            if (letExpr.Expression != null)
+                CountControlFlowExpressions(letExpr.Expression, ref branchCount, ref switchCount, ref hasReturn);
+            break;
+
+        case EX_LetObj letObj:
+            if (letObj.AssignmentExpression != null)
+                CountControlFlowExpressions(letObj.AssignmentExpression, ref branchCount, ref switchCount, ref hasReturn);
+            break;
+
+        case EX_LetBool letBool:
+            if (letBool.AssignmentExpression != null)
+                CountControlFlowExpressions(letBool.AssignmentExpression, ref branchCount, ref switchCount, ref hasReturn);
+            break;
+    }
+}
+
 string ResolvePackageIndex(UAsset asset, FPackageIndex index)
 {
     if (index == null || index.Index == 0) return "[null]";
@@ -3139,6 +3247,7 @@ void BatchBlueprint(List<string> paths, EngineVersion engineVersion)
 
                     // Extract calls from bytecode
                     var funcCalls = new List<string>();
+                    object controlFlow = null;
                     if (funcExport.ScriptBytecode != null)
                     {
                         var calls = new HashSet<string>();
@@ -3149,10 +3258,13 @@ void BatchBlueprint(List<string> paths, EngineVersion engineVersion)
                         funcCalls = calls.Where(c => !string.IsNullOrEmpty(c) && c != "[null]" && !c.StartsWith("["))
                             .Where(c => !c.StartsWith("K2Node_") && !c.Contains("__"))
                             .Take(10).ToList();
+
+                        // Analyze control flow for branching/complexity info
+                        controlFlow = AnalyzeControlFlow(funcExport.ScriptBytecode);
                     }
 
                     if (functions.Count < 25)
-                        functions.Add(new { name = funcName, flags = string.Join(",", simpleFlags), calls = funcCalls });
+                        functions.Add(new { name = funcName, flags = string.Join(",", simpleFlags), calls = funcCalls, control_flow = controlFlow });
                 }
             }
 

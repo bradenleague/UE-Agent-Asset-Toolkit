@@ -269,8 +269,10 @@ class BlueprintGraphDoc(DocChunk):
         references_out: list[str] = None,
         module: str = None,
         is_event: bool = False,
+        control_flow: dict = None,
     ):
         references_out = references_out or []
+        control_flow = control_flow or {}
 
         func_type = "Event" if is_event else "Function"
 
@@ -286,6 +288,11 @@ class BlueprintGraphDoc(DocChunk):
         if variables:
             text_parts.append(f"Variables: {', '.join(variables[:10])}")
 
+        # Add control flow description for searchability
+        if control_flow.get("has_branches"):
+            complexity = control_flow.get("complexity", "unknown")
+            text_parts.append(f"Contains conditional logic ({complexity} complexity)")
+
         text = ". ".join(text_parts) + "."
 
         metadata = {
@@ -293,6 +300,7 @@ class BlueprintGraphDoc(DocChunk):
             "calls": calls,
             "variables": variables,
             "is_event": is_event,
+            "control_flow": control_flow,
         }
 
         super().__init__(

@@ -1151,7 +1151,19 @@ class AssetIndexer:
         refs = []
         try:
             root = ET.fromstring(result)
+            # Parse asset references (/Game/ paths)
             for ref in root.findall(".//asset-refs/ref"):
+                if ref.text:
+                    refs.append(ref.text)
+            # Parse class references (C++ classes used by Blueprint)
+            # These become /Script/ references for cross-referencing with C++ docs
+            for ref in root.findall(".//class-refs/ref"):
+                if ref.text:
+                    # Class refs are just class names like "UCharacterMovementComponent"
+                    # Store them as-is - they'll be resolved to C++ docs during edge creation
+                    refs.append(f"/Script/{ref.text}")
+            # Parse script references (already in /Script/Module format)
+            for ref in root.findall(".//script-refs/ref"):
                 if ref.text:
                     refs.append(ref.text)
         except ET.ParseError:
@@ -1358,6 +1370,7 @@ class AssetIndexer:
                 func_name = func_data.get("name", "")
                 flags = func_data.get("flags", "").split(",") if func_data.get("flags") else []
                 calls = func_data.get("calls") or []
+                control_flow = func_data.get("control_flow") or {}
 
                 if func_name:
                     chunks.append(BlueprintGraphDoc(
@@ -1368,6 +1381,7 @@ class AssetIndexer:
                         calls=calls,
                         variables=variables,
                         references_out=refs,
+                        control_flow=control_flow,
                     ))
 
         return chunks

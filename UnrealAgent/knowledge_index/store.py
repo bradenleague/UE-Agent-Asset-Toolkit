@@ -197,6 +197,16 @@ class KnowledgeStore:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_file_meta_type ON file_meta(asset_type)")
 
+            # C++ class name index for cross-referencing with Blueprints
+            # Maps simple class name (e.g., "UCharacterMovementComponent") to doc_id
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS cpp_class_index (
+                    class_name TEXT PRIMARY KEY,
+                    doc_id TEXT NOT NULL,
+                    source_path TEXT
+                )
+            """)
+
             conn.commit()
         finally:
             conn.close()
@@ -431,13 +441,19 @@ class KnowledgeStore:
         # If already a doc_id format, return as is
         if ref.startswith("asset:") or ref.startswith("material:") or ref.startswith("widget:"):
             return ref
+        if ref.startswith("cpp_class:") or ref.startswith("cpp_func:") or ref.startswith("source:"):
+            return ref
 
         # Convert /Game/... path to asset: format
         if ref.startswith("/Game/"):
             return f"asset:{ref}"
 
-        # For /Script/ references, use as-is but with script: prefix
+        # For /Script/ references, try to resolve to C++ class doc_id
         if ref.startswith("/Script/"):
+            resolved = self.resolve_script_class(ref)
+            if resolved:
+                return resolved  # Links directly to cpp_class doc
+            # Fallback: keep script: prefix for unresolved refs
             return f"script:{ref}"
 
         return f"asset:{ref}"
@@ -1137,5 +1153,114 @@ class KnowledgeStore:
                 "total": total,
                 "by_type": by_type,
             }
+        finally:
+            conn.close()
+
+    # =========================================================================
+    # C++ CLASS INDEX - For cross-referencing Blueprints with C++ source
+    # =========================================================================
+
+    def upsert_cpp_class(self, class_name: str, doc_id: str, source_path: str = None):
+        """
+        Register a C++ class name for cross-referencing.
+
+        Called when indexing C++ source files to build the lookup table.
+
+        Args:
+            class_name: Simple class name (e.g., "UCharacterMovementComponent")
+            doc_id: Full doc_id (e.g., "cpp_class:Source/.../CharacterMovementComponent.h::UCharacterMovementComponent")
+            source_path: Optional source file path for debugging
+        """
+        conn = self._get_connection()
+        try:
+            conn.execute("""
+                INSERT OR REPLACE INTO cpp_class_index (class_name, doc_id, source_path)
+                VALUES (?, ?, ?)
+            """, (class_name, doc_id, source_path))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def upsert_cpp_classes_batch(self, class_data: list[tuple[str, str, str]]):
+        """
+        Batch register C++ class names.
+
+        Args:
+            class_data: List of (class_name, doc_id, source_path) tuples
+        """
+        if not class_data:
+            return
+
+        conn = self._get_connection()
+        try:
+            conn.executemany("""
+                INSERT OR REPLACE INTO cpp_class_index (class_name, doc_id, source_path)
+                VALUES (?, ?, ?)
+            """, class_data)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def resolve_cpp_class(self, class_name: str) -> Optional[str]:
+        """
+        Resolve a C++ class name to its doc_id.
+
+        Args:
+            class_name: Simple class name (e.g., "UCharacterMovementComponent")
+
+        Returns:
+            doc_id if found, None otherwise
+        """
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                "SELECT doc_id FROM cpp_class_index WHERE class_name = ?",
+                (class_name,)
+            ).fetchone()
+            return row["doc_id"] if row else None
+        finally:
+            conn.close()
+
+    def resolve_script_class(self, script_ref: str) -> Optional[str]:
+        """
+        Resolve a /Script/ reference to a cpp_class doc_id.
+
+        Handles various formats:
+        - /Script/Engine.UClassName -> resolves UClassName
+        - /Script/UClassName -> resolves UClassName
+        - UClassName_C -> strips _C suffix and resolves UClassName
+
+        Args:
+            script_ref: Script reference path or class name
+
+        Returns:
+            cpp_class doc_id if found, None otherwise
+        """
+        # Extract class name from /Script/Module.ClassName format
+        if script_ref.startswith("/Script/"):
+            # Remove /Script/ prefix
+            remainder = script_ref[8:]  # len("/Script/") = 8
+            # Take the part after the dot (if any)
+            if "." in remainder:
+                class_name = remainder.split(".")[-1]
+            else:
+                class_name = remainder
+        else:
+            class_name = script_ref
+
+        # Strip _C suffix (Blueprint generated class suffix)
+        if class_name.endswith("_C"):
+            class_name = class_name[:-2]
+
+        return self.resolve_cpp_class(class_name)
+
+    def get_cpp_class_stats(self) -> dict:
+        """Get statistics about the C++ class index."""
+        conn = self._get_connection()
+        try:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM cpp_class_index"
+            ).fetchone()[0]
+            return {"total_classes": total}
         finally:
             conn.close()

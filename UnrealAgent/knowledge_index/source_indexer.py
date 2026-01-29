@@ -248,6 +248,8 @@ class SourceIndexer:
         chunks.append(file_doc)
 
         # 2. Class chunks (one per UCLASS/USTRUCT)
+        # Also collect class data for cpp_class_index registration
+        cpp_class_data = []
         for cls in info.classes:
             # Collect methods and properties for this class
             class_methods = [f.name for f in info.functions if f.class_name == cls.name]
@@ -265,6 +267,9 @@ class SourceIndexer:
                 module=module_prefix,
             )
             chunks.append(class_doc)
+
+            # Register class name for cross-referencing with Blueprints
+            cpp_class_data.append((cls.name, class_doc.doc_id, rel_path))
 
         # 3. Function chunks (one per UFUNCTION)
         for func in info.functions:
@@ -311,6 +316,10 @@ class SourceIndexer:
             changed = self.store.upsert_doc(chunk, embedding)
             if changed:
                 any_changed = True
+
+        # Register C++ class names for cross-referencing with Blueprints
+        if cpp_class_data:
+            self.store.upsert_cpp_classes_batch(cpp_class_data)
 
         return "indexed" if any_changed else "unchanged"
 
