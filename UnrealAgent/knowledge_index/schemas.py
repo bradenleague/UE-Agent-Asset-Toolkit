@@ -16,6 +16,24 @@ import hashlib
 import json
 
 
+def extract_module_from_asset_path(path: str) -> str:
+    """Extract module name from asset path (e.g., /Game/UI/HUD/Widget -> UI)."""
+    parts = path.split("/")
+    if len(parts) >= 3 and parts[1] == "Game":
+        return parts[2]
+    return "Unknown"
+
+
+def extract_module_from_source_path(path: str) -> str:
+    """Extract module name from source path (e.g., Source/MyGame/Public/Foo.h -> MyGame)."""
+    parts = path.replace("\\", "/").split("/")
+    if len(parts) >= 2 and parts[0] == "Source":
+        return parts[1]
+    if len(parts) >= 2 and parts[0] == "Plugins":
+        return parts[1]
+    return "Unknown"
+
+
 @dataclass
 class DocChunk:
     """Base document chunk with common fields."""
@@ -179,18 +197,9 @@ class AssetSummary(DocChunk):
             text=text,
             metadata=metadata,
             references_out=references_out,
-            module=module or self._extract_module(path),
+            module=module or extract_module_from_asset_path(path),
             asset_type=asset_type,
         )
-
-    @staticmethod
-    def _extract_module(path: str) -> str:
-        """Extract module name from asset path."""
-        # /Game/UI/HUD/Widget -> UI
-        parts = path.split("/")
-        if len(parts) >= 3 and parts[1] == "Game":
-            return parts[2]
-        return "Unknown"
 
 
 @dataclass
@@ -235,16 +244,9 @@ class WidgetTreeDoc(DocChunk):
             text=text,
             metadata=metadata,
             references_out=references_out,
-            module=module or self._extract_module(path),
+            module=module or extract_module_from_asset_path(path),
             asset_type="WidgetBlueprint",
         )
-
-    @staticmethod
-    def _extract_module(path: str) -> str:
-        parts = path.split("/")
-        if len(parts) >= 3 and parts[1] == "Game":
-            return parts[2]
-        return "Unknown"
 
 
 @dataclass
@@ -301,16 +303,9 @@ class BlueprintGraphDoc(DocChunk):
             text=text,
             metadata=metadata,
             references_out=references_out,
-            module=module or self._extract_module(path),
+            module=module or extract_module_from_asset_path(path),
             asset_type="Blueprint",
         )
-
-    @staticmethod
-    def _extract_module(path: str) -> str:
-        parts = path.split("/")
-        if len(parts) >= 3 and parts[1] == "Game":
-            return parts[2]
-        return "Unknown"
 
 
 @dataclass
@@ -401,16 +396,9 @@ class MaterialParamsDoc(DocChunk):
             text=text,
             metadata=metadata,
             references_out=references_out,
-            module=module or self._extract_module(path),
+            module=module or extract_module_from_asset_path(path),
             asset_type="MaterialInstance" if is_instance else "Material",
         )
-
-    @staticmethod
-    def _extract_module(path: str) -> str:
-        parts = path.split("/")
-        if len(parts) >= 3 and parts[1] == "Game":
-            return parts[2]
-        return "Unknown"
 
 
 @dataclass
@@ -485,16 +473,9 @@ class MaterialFunctionDoc(DocChunk):
             text=text,
             metadata=metadata,
             references_out=references_out,
-            module=module or self._extract_module(path),
+            module=module or extract_module_from_asset_path(path),
             asset_type="MaterialFunction",
         )
-
-    @staticmethod
-    def _extract_module(path: str) -> str:
-        parts = path.split("/")
-        if len(parts) >= 3 and parts[1] == "Game":
-            return parts[2]
-        return "Unknown"
 
 
 # =============================================================================
@@ -562,20 +543,9 @@ class SourceFileDoc(DocChunk):
             text=text,
             metadata=metadata,
             references_out=references_out,
-            module=module or self._extract_module(path),
+            module=module or extract_module_from_source_path(path),
             asset_type="SourceFile",
         )
-
-    @staticmethod
-    def _extract_module(path: str) -> str:
-        """Extract module name from source path."""
-        # Source/MyGame/Public/MyClass.h -> MyGame
-        parts = path.replace("\\", "/").split("/")
-        if len(parts) >= 2 and parts[0] == "Source":
-            return parts[1]
-        if len(parts) >= 2 and parts[0] == "Plugins":
-            return parts[1]
-        return "Unknown"
 
 
 @dataclass
@@ -644,7 +614,7 @@ class CppClassDoc(DocChunk):
             text=text,
             metadata=metadata,
             references_out=references_out,
-            module=module or SourceFileDoc._extract_module(path),
+            module=module or extract_module_from_source_path(path),
             asset_type="CppClass",
         )
 
@@ -716,7 +686,7 @@ class CppFunctionDoc(DocChunk):
             text=text,
             metadata=metadata,
             references_out=references_out,
-            module=module or SourceFileDoc._extract_module(path),
+            module=module or extract_module_from_source_path(path),
             asset_type="CppFunction",
         )
 
@@ -778,7 +748,7 @@ class CppPropertyDoc(DocChunk):
             text=text,
             metadata=metadata,
             references_out=references_out,
-            module=module or SourceFileDoc._extract_module(path),
+            module=module or extract_module_from_source_path(path),
             asset_type="CppProperty",
         )
 

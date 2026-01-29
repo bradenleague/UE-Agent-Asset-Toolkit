@@ -534,7 +534,7 @@ async def read_resource(uri: str):
             with open(PROJECT, 'r') as f:
                 proj = json.load(f)
                 engine_version = proj.get("EngineAssociation", "Unknown")
-        except:
+        except (OSError, json.JSONDecodeError):
             pass
 
         # Get index stats
@@ -547,7 +547,7 @@ async def read_resource(uri: str):
                 "lightweight_assets": status.lightweight_total,
                 "total_indexed": status.total_docs + status.lightweight_total,
             }
-        except:
+        except Exception:
             index_stats = {"status": "not built"}
 
         return json.dumps({

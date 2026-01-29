@@ -10,6 +10,22 @@ import sys
 from typing import Optional
 
 # =============================================================================
+# Formatting Helpers
+# =============================================================================
+
+def format_eta(seconds: float) -> str:
+    """Format seconds as human-readable duration (e.g., '2m 30s')."""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    elif seconds < 3600:
+        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
+    else:
+        hours = int(seconds // 3600)
+        mins = int((seconds % 3600) // 60)
+        return f"{hours}h {mins}m"
+
+
+# =============================================================================
 # Configuration
 # =============================================================================
 
@@ -600,7 +616,7 @@ def _list_assets_filesystem(path: str = "/Game", type_filter: Optional[str] = No
                         asset_class = summary.get("asset_type", "Unknown")
                         if asset_class != type_filter:
                             continue
-                except:
+                except (subprocess.TimeoutExpired, subprocess.SubprocessError, json.JSONDecodeError, OSError):
                     skipped_uncertain += 1
                     continue
             else:
@@ -1131,15 +1147,6 @@ if __name__ == "__main__":
         spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         progress_state = {'idx': 0, 'start_time': time_module.time(), 'last_update': 0}
 
-        def format_eta(seconds):
-            if seconds < 60:
-                return f"{int(seconds)}s"
-            elif seconds < 3600:
-                return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-            else:
-                hours = int(seconds // 3600)
-                mins = int((seconds % 3600) // 60)
-                return f"{hours}h {mins}m"
 
         def progress(path, current, total):
             # Get asset name from path
@@ -1275,15 +1282,6 @@ if __name__ == "__main__":
         import time as time_module
         batch_state = {'start_time': None, 'phase_start': None, 'last_phase': ''}
 
-        def format_eta(seconds):
-            if seconds < 60:
-                return f"{int(seconds)}s"
-            elif seconds < 3600:
-                return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-            else:
-                hours = int(seconds // 3600)
-                mins = int((seconds % 3600) // 60)
-                return f"{hours}h {mins}m"
 
         def batch_progress(status_msg, current, total):
             now = time_module.time()
@@ -1379,15 +1377,6 @@ if __name__ == "__main__":
         spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         progress_state = {'idx': 0, 'start_time': None}
 
-        def format_eta(seconds):
-            if seconds < 60:
-                return f"{int(seconds)}s"
-            elif seconds < 3600:
-                return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-            else:
-                hours = int(seconds // 3600)
-                mins = int((seconds % 3600) // 60)
-                return f"{hours}h {mins}m"
 
         def progress(path, current, total):
             now = time_module.time()
@@ -1473,15 +1462,6 @@ if __name__ == "__main__":
         spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         progress_state = {'idx': 0, 'start_time': None}
 
-        def format_eta(seconds):
-            if seconds < 60:
-                return f"{int(seconds)}s"
-            elif seconds < 3600:
-                return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-            else:
-                hours = int(seconds // 3600)
-                mins = int((seconds % 3600) // 60)
-                return f"{hours}h {mins}m"
 
         def progress(path, current, total):
             now = time_module.time()
