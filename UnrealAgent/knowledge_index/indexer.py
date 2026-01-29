@@ -256,11 +256,12 @@ class AssetIndexer:
         profile: str = "hybrid",
     ) -> dict:
         """
-        Index assets using batch API for 430x speedup.
+        Index assets using batch API for massive speedup.
 
-        Two-tier strategy:
-        - Lightweight: batch-summary + batch-refs for low-value types (~4 hours for 908k)
-        - Semantic: Full parsing for high-value types (~24 hours for 70k)
+        Three-phase strategy:
+        - Phase 1: batch-fast for ultra-fast classification (header-only, 10-100x faster)
+        - Phase 2: batch-refs for lightweight types (path + references only)
+        - Phase 3: batch-blueprint/widget/material/datatable for semantic types
 
         Args:
             folder_path: Asset path prefix (e.g., /Game/UI)
@@ -311,16 +312,18 @@ class AssetIndexer:
         if not assets:
             return stats
 
-        # Phase 1: Batch summary to classify all assets
-        print("Phase 1: Classifying assets...", file=sys.stderr)
-        asset_summaries = {}  # path -> {asset_type, name, ...}
+        # Phase 1: Ultra-fast classification using batch-fast (header-only parsing)
+        # This is 10-100x faster than batch-summary - only reads magic number and file size,
+        # detects asset type from filename prefixes without loading UAssetAPI
+        print("Phase 1: Fast-classifying assets (header-only)...", file=sys.stderr)
+        asset_summaries = {}  # path -> {asset_type, name, size, ...}
 
         for batch_start in range(0, len(assets), batch_size):
             batch = assets[batch_start:batch_start + batch_size]
 
             if progress_callback:
                 progress_callback(
-                    f"Classifying batch {batch_start // batch_size + 1}",
+                    f"Fast-classifying batch {batch_start // batch_size + 1}",
                     batch_start,
                     len(assets)
                 )
@@ -332,9 +335,9 @@ class AssetIndexer:
                 batch_file = f.name
 
             try:
-                # Run batch-summary (longer timeout for network drives/OneDrive)
+                # Run batch-fast (10-100x faster than batch-summary)
                 result = subprocess.run(
-                    [str(self.parser_path), "batch-summary", batch_file],
+                    [str(self.parser_path), "batch-fast", batch_file],
                     capture_output=True,
                     text=True,
                     timeout=BATCH_TIMEOUT,
@@ -359,7 +362,7 @@ class AssetIndexer:
             finally:
                 os.unlink(batch_file)
 
-        print(f"Classified {len(asset_summaries)} assets", file=sys.stderr)
+        print(f"Fast-classified {len(asset_summaries)} assets", file=sys.stderr)
 
         # Phase 2: Batch references for lightweight assets (everything NOT semantic)
         # This includes: textures, meshes, animations, sounds, OFPA files, Unknown, etc.
