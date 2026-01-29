@@ -2886,8 +2886,11 @@ void BatchSummary(List<string> paths, EngineVersion engineVersion)
 
 void BatchReferences(List<string> paths, EngineVersion engineVersion)
 {
-    // Output JSONL - one JSON object per line
-    foreach (var path in paths)
+    // Parallel processing with capped concurrency to avoid disk thrash
+    var options = new ParallelOptions { MaxDegreeOfParallelism = 8 };
+    var results = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+    Parallel.ForEach(paths, options, path =>
     {
         try
         {
@@ -2897,11 +2900,11 @@ void BatchReferences(List<string> paths, EngineVersion engineVersion)
 
             if (!File.Exists(resolvedPath))
             {
-                Console.WriteLine(JsonSerializer.Serialize(new {
+                results.Add(JsonSerializer.Serialize(new {
                     path = path,
                     error = "File not found"
                 }));
-                continue;
+                return;
             }
 
             var asset = new UAsset(resolvedPath, engineVersion);
@@ -2978,25 +2981,31 @@ void BatchReferences(List<string> paths, EngineVersion engineVersion)
                 }
             }
 
-            Console.WriteLine(JsonSerializer.Serialize(new {
+            results.Add(JsonSerializer.Serialize(new {
                 path = path,
                 refs = assetRefs.OrderBy(r => r).ToList()
             }));
         }
         catch (IOException ex) when (ex.Message.Contains("being used by another process"))
         {
-            Console.WriteLine(JsonSerializer.Serialize(new {
+            results.Add(JsonSerializer.Serialize(new {
                 path = path,
                 error = "File locked"
             }));
         }
         catch (Exception ex)
         {
-            Console.WriteLine(JsonSerializer.Serialize(new {
+            results.Add(JsonSerializer.Serialize(new {
                 path = path,
                 error = ex.Message
             }));
         }
+    });
+
+    // Output all results
+    foreach (var result in results)
+    {
+        Console.WriteLine(result);
     }
 }
 
@@ -3005,7 +3014,11 @@ void BatchReferences(List<string> paths, EngineVersion engineVersion)
 // ============================================================================
 void BatchBlueprint(List<string> paths, EngineVersion engineVersion)
 {
-    foreach (var path in paths)
+    // Parallel processing with capped concurrency to avoid disk thrash
+    var options = new ParallelOptions { MaxDegreeOfParallelism = 8 };
+    var results = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+    Parallel.ForEach(paths, options, path =>
     {
         try
         {
@@ -3015,8 +3028,8 @@ void BatchBlueprint(List<string> paths, EngineVersion engineVersion)
 
             if (!File.Exists(resolvedPath))
             {
-                Console.WriteLine(JsonSerializer.Serialize(new { path, error = "File not found" }));
-                continue;
+                results.Add(JsonSerializer.Serialize(new { path, error = "File not found" }));
+                return;
             }
 
             var asset = new UAsset(resolvedPath, engineVersion);
@@ -3165,7 +3178,7 @@ void BatchBlueprint(List<string> paths, EngineVersion engineVersion)
             // Collect refs (include in output to avoid separate call)
             var refs = CollectAssetRefs(asset);
 
-            Console.WriteLine(JsonSerializer.Serialize(new {
+            results.Add(JsonSerializer.Serialize(new {
                 path,
                 name = bpName,
                 parent = parentClass,
@@ -3179,12 +3192,18 @@ void BatchBlueprint(List<string> paths, EngineVersion engineVersion)
         }
         catch (IOException ex) when (ex.Message.Contains("being used by another process"))
         {
-            Console.WriteLine(JsonSerializer.Serialize(new { path, error = "File locked" }));
+            results.Add(JsonSerializer.Serialize(new { path, error = "File locked" }));
         }
         catch (Exception ex)
         {
-            Console.WriteLine(JsonSerializer.Serialize(new { path, error = ex.Message }));
+            results.Add(JsonSerializer.Serialize(new { path, error = ex.Message }));
         }
+    });
+
+    // Output all results
+    foreach (var result in results)
+    {
+        Console.WriteLine(result);
     }
 }
 
@@ -3193,7 +3212,11 @@ void BatchBlueprint(List<string> paths, EngineVersion engineVersion)
 // ============================================================================
 void BatchWidget(List<string> paths, EngineVersion engineVersion)
 {
-    foreach (var path in paths)
+    // Parallel processing with capped concurrency to avoid disk thrash
+    var options = new ParallelOptions { MaxDegreeOfParallelism = 8 };
+    var results = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+    Parallel.ForEach(paths, options, path =>
     {
         try
         {
@@ -3203,8 +3226,8 @@ void BatchWidget(List<string> paths, EngineVersion engineVersion)
 
             if (!File.Exists(resolvedPath))
             {
-                Console.WriteLine(JsonSerializer.Serialize(new { path, error = "File not found" }));
-                continue;
+                results.Add(JsonSerializer.Serialize(new { path, error = "File not found" }));
+                return;
             }
 
             var asset = new UAsset(resolvedPath, engineVersion);
@@ -3478,7 +3501,7 @@ void BatchWidget(List<string> paths, EngineVersion engineVersion)
             // Build output with blueprint metadata
             var parent = (parentClass != "Unknown" && parentClass != "[null]") ? parentClass : null;
 
-            Console.WriteLine(JsonSerializer.Serialize(new {
+            results.Add(JsonSerializer.Serialize(new {
                 path,
                 parent,
                 interfaces = interfaces.Count > 0 ? interfaces : null,
@@ -3493,12 +3516,18 @@ void BatchWidget(List<string> paths, EngineVersion engineVersion)
         }
         catch (IOException ex) when (ex.Message.Contains("being used by another process"))
         {
-            Console.WriteLine(JsonSerializer.Serialize(new { path, error = "File locked" }));
+            results.Add(JsonSerializer.Serialize(new { path, error = "File locked" }));
         }
         catch (Exception ex)
         {
-            Console.WriteLine(JsonSerializer.Serialize(new { path, error = ex.Message }));
+            results.Add(JsonSerializer.Serialize(new { path, error = ex.Message }));
         }
+    });
+
+    // Output all results
+    foreach (var result in results)
+    {
+        Console.WriteLine(result);
     }
 }
 
@@ -3507,7 +3536,11 @@ void BatchWidget(List<string> paths, EngineVersion engineVersion)
 // ============================================================================
 void BatchMaterial(List<string> paths, EngineVersion engineVersion)
 {
-    foreach (var path in paths)
+    // Parallel processing with capped concurrency to avoid disk thrash
+    var options = new ParallelOptions { MaxDegreeOfParallelism = 8 };
+    var results = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+    Parallel.ForEach(paths, options, path =>
     {
         try
         {
@@ -3517,8 +3550,8 @@ void BatchMaterial(List<string> paths, EngineVersion engineVersion)
 
             if (!File.Exists(resolvedPath))
             {
-                Console.WriteLine(JsonSerializer.Serialize(new { path, error = "File not found" }));
-                continue;
+                results.Add(JsonSerializer.Serialize(new { path, error = "File not found" }));
+                return;
             }
 
             var asset = new UAsset(resolvedPath, engineVersion);
@@ -3533,8 +3566,8 @@ void BatchMaterial(List<string> paths, EngineVersion engineVersion)
 
             if (materialExportBase == null)
             {
-                Console.WriteLine(JsonSerializer.Serialize(new { path, error = "No Material found" }));
-                continue;
+                results.Add(JsonSerializer.Serialize(new { path, error = "No Material found" }));
+                return;
             }
 
             var className = materialExportBase.GetExportClassType()?.ToString() ?? "";
@@ -3654,7 +3687,7 @@ void BatchMaterial(List<string> paths, EngineVersion engineVersion)
             // Collect refs
             var refs = CollectAssetRefs(asset);
 
-            Console.WriteLine(JsonSerializer.Serialize(new {
+            results.Add(JsonSerializer.Serialize(new {
                 path,
                 name = matName,
                 is_instance = isInstance,
@@ -3671,12 +3704,18 @@ void BatchMaterial(List<string> paths, EngineVersion engineVersion)
         }
         catch (IOException ex) when (ex.Message.Contains("being used by another process"))
         {
-            Console.WriteLine(JsonSerializer.Serialize(new { path, error = "File locked" }));
+            results.Add(JsonSerializer.Serialize(new { path, error = "File locked" }));
         }
         catch (Exception ex)
         {
-            Console.WriteLine(JsonSerializer.Serialize(new { path, error = ex.Message }));
+            results.Add(JsonSerializer.Serialize(new { path, error = ex.Message }));
         }
+    });
+
+    // Output all results
+    foreach (var result in results)
+    {
+        Console.WriteLine(result);
     }
 }
 
@@ -3685,7 +3724,11 @@ void BatchMaterial(List<string> paths, EngineVersion engineVersion)
 // ============================================================================
 void BatchDataTable(List<string> paths, EngineVersion engineVersion)
 {
-    foreach (var path in paths)
+    // Parallel processing with capped concurrency to avoid disk thrash
+    var options = new ParallelOptions { MaxDegreeOfParallelism = 8 };
+    var results = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+    Parallel.ForEach(paths, options, path =>
     {
         try
         {
@@ -3695,8 +3738,8 @@ void BatchDataTable(List<string> paths, EngineVersion engineVersion)
 
             if (!File.Exists(resolvedPath))
             {
-                Console.WriteLine(JsonSerializer.Serialize(new { path, error = "File not found" }));
-                continue;
+                results.Add(JsonSerializer.Serialize(new { path, error = "File not found" }));
+                return;
             }
 
             var asset = new UAsset(resolvedPath, engineVersion);
@@ -3708,8 +3751,8 @@ void BatchDataTable(List<string> paths, EngineVersion engineVersion)
 
             if (dtExport == null)
             {
-                Console.WriteLine(JsonSerializer.Serialize(new { path, error = "No DataTable found" }));
-                continue;
+                results.Add(JsonSerializer.Serialize(new { path, error = "No DataTable found" }));
+                return;
             }
 
             var tableName = dtExport.ObjectName.ToString();
@@ -3749,7 +3792,7 @@ void BatchDataTable(List<string> paths, EngineVersion engineVersion)
             // Collect refs
             var refs = CollectAssetRefs(asset);
 
-            Console.WriteLine(JsonSerializer.Serialize(new {
+            results.Add(JsonSerializer.Serialize(new {
                 path,
                 name = tableName,
                 row_struct = rowStruct,
@@ -3761,12 +3804,18 @@ void BatchDataTable(List<string> paths, EngineVersion engineVersion)
         }
         catch (IOException ex) when (ex.Message.Contains("being used by another process"))
         {
-            Console.WriteLine(JsonSerializer.Serialize(new { path, error = "File locked" }));
+            results.Add(JsonSerializer.Serialize(new { path, error = "File locked" }));
         }
         catch (Exception ex)
         {
-            Console.WriteLine(JsonSerializer.Serialize(new { path, error = ex.Message }));
+            results.Add(JsonSerializer.Serialize(new { path, error = ex.Message }));
         }
+    });
+
+    // Output all results
+    foreach (var result in results)
+    {
+        Console.WriteLine(result);
     }
 }
 
