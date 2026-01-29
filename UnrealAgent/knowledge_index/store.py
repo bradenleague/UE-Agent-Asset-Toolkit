@@ -4,7 +4,7 @@ Knowledge Store - SQLite-based storage for the semantic index.
 Provides:
 - Document metadata storage with SQLite
 - Full-text search with FTS5
-- Vector similarity search (numpy-based, with sqlite-vec/LanceDB options)
+- Vector similarity search (numpy-based cosine similarity)
 - Reference graph with edges table
 """
 
@@ -17,18 +17,12 @@ from pathlib import Path
 
 from .schemas import DocChunk, SearchResult, ReferenceGraph, IndexStatus
 
-# Optional: try to import vector search backends
+# Optional: numpy for vector similarity search
 try:
     import numpy as np
     HAS_NUMPY = True
 except ImportError:
     HAS_NUMPY = False
-
-try:
-    import sqlite_vec
-    HAS_SQLITE_VEC = True
-except ImportError:
-    HAS_SQLITE_VEC = False
 
 
 class KnowledgeStore:
@@ -75,15 +69,6 @@ class KnowledgeStore:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
-
-        # Load sqlite-vec extension if available
-        if HAS_SQLITE_VEC:
-            try:
-                conn.enable_load_extension(True)
-                sqlite_vec.load(conn)
-            except Exception:
-                pass  # Fall back to numpy-based search
-
         return conn
 
     def _init_db(self):
@@ -199,6 +184,19 @@ class KnowledgeStore:
                 )
             """)
 
+            # File metadata for incremental indexing
+            # Tracks file mtime/size to skip unchanged files BEFORE parsing
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS file_meta (
+                    path TEXT PRIMARY KEY,
+                    mtime REAL NOT NULL,
+                    size INTEGER NOT NULL,
+                    asset_type TEXT,
+                    indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_file_meta_type ON file_meta(asset_type)")
+
             conn.commit()
         finally:
             conn.close()
@@ -264,6 +262,143 @@ class KnowledgeStore:
 
             conn.commit()
             return True
+        finally:
+            conn.close()
+
+    def upsert_docs_batch(
+        self,
+        docs: list[DocChunk],
+        embeddings: list[list[float]] = None,
+        force: bool = False,
+    ) -> dict:
+        """
+        Batch insert/update documents for significantly better performance.
+
+        Uses executemany and single transaction for 10-100x speedup over
+        individual upsert_doc calls.
+
+        Args:
+            docs: List of DocChunk objects to store
+            embeddings: Optional list of embedding vectors (same length as docs, or None)
+            force: If True, skip fingerprint checks and always update
+
+        Returns:
+            Dict with 'inserted', 'unchanged', 'errors' counts
+        """
+        if not docs:
+            return {"inserted": 0, "unchanged": 0, "errors": 0}
+
+        stats = {"inserted": 0, "unchanged": 0, "errors": 0}
+        conn = self._get_connection()
+
+        try:
+            # If not forcing, check fingerprints to skip unchanged docs
+            docs_to_insert = docs
+            if not force:
+                doc_ids = [doc.doc_id for doc in docs]
+                placeholders = ",".join("?" * len(doc_ids))
+                existing = conn.execute(
+                    f"SELECT doc_id, fingerprint FROM docs WHERE doc_id IN ({placeholders})",
+                    doc_ids
+                ).fetchall()
+                existing_fps = {row["doc_id"]: row["fingerprint"] for row in existing}
+
+                docs_to_insert = []
+                embeddings_to_insert = []
+                for i, doc in enumerate(docs):
+                    if doc.doc_id in existing_fps and existing_fps[doc.doc_id] == doc.fingerprint:
+                        stats["unchanged"] += 1
+                    else:
+                        docs_to_insert.append(doc)
+                        if embeddings:
+                            embeddings_to_insert.append(embeddings[i] if i < len(embeddings) else None)
+
+                embeddings = embeddings_to_insert if embeddings else None
+
+            if not docs_to_insert:
+                return stats
+
+            now = datetime.now().isoformat()
+
+            # Prepare batch data for docs
+            doc_data = [
+                (
+                    doc.doc_id,
+                    doc.type,
+                    doc.path,
+                    doc.name,
+                    doc.module,
+                    doc.asset_type,
+                    doc.text,
+                    json.dumps(doc.metadata) if doc.metadata else "{}",
+                    json.dumps(doc.references_out) if doc.references_out else "[]",
+                    doc.fingerprint,
+                    doc.schema_version,
+                    doc.embed_model,
+                    doc.embed_version,
+                    now,
+                )
+                for doc in docs_to_insert
+            ]
+
+            # Batch insert docs
+            conn.executemany("""
+                INSERT OR REPLACE INTO docs
+                (doc_id, type, path, name, module, asset_type, text, metadata,
+                 references_out, fingerprint, schema_version, embed_model, embed_version, indexed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, doc_data)
+
+            # Batch insert embeddings if provided
+            if embeddings and self.use_vector_search:
+                embedding_data = []
+                for i, doc in enumerate(docs_to_insert):
+                    if i < len(embeddings) and embeddings[i] is not None:
+                        embedding_data.append((
+                            doc.doc_id,
+                            self._embedding_to_blob(embeddings[i]),
+                            doc.embed_model,
+                            doc.embed_version,
+                        ))
+
+                if embedding_data:
+                    conn.executemany("""
+                        INSERT OR REPLACE INTO docs_embeddings
+                        (doc_id, embedding, embed_model, embed_version)
+                        VALUES (?, ?, ?, ?)
+                    """, embedding_data)
+
+            # Batch update edges
+            # First, delete all existing edges for these docs
+            doc_ids_to_update = [doc.doc_id for doc in docs_to_insert]
+            placeholders = ",".join("?" * len(doc_ids_to_update))
+            conn.execute(f"DELETE FROM edges WHERE from_id IN ({placeholders})", doc_ids_to_update)
+
+            # Then batch insert new edges
+            edge_data = []
+            for doc in docs_to_insert:
+                for ref in doc.references_out:
+                    to_id = self._normalize_reference(ref)
+                    edge_data.append((doc.doc_id, to_id, "uses_asset"))
+
+            if edge_data:
+                conn.executemany("""
+                    INSERT OR IGNORE INTO edges (from_id, to_id, edge_type)
+                    VALUES (?, ?, ?)
+                """, edge_data)
+
+            conn.commit()
+            stats["inserted"] = len(docs_to_insert)
+            return stats
+
+        except Exception as e:
+            # Rollback on any error to prevent partial data corruption
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            stats["errors"] = len(docs)
+            return stats
         finally:
             conn.close()
 
@@ -724,6 +859,87 @@ class KnowledgeStore:
         finally:
             conn.close()
 
+    def rebuild_fts(self):
+        """Rebuild FTS5 index from docs table. Use after bulk operations or corruption."""
+        conn = self._get_connection()
+        try:
+            conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('rebuild')")
+            conn.commit()
+        finally:
+            conn.close()
+
+    # =========================================================================
+    # FILE METADATA - For incremental indexing (skip unchanged files)
+    # =========================================================================
+
+    def get_file_meta_batch(self, paths: list[str]) -> dict[str, tuple[float, int]]:
+        """
+        Get file metadata for multiple paths in one query.
+
+        Args:
+            paths: List of file paths to check
+
+        Returns:
+            Dict mapping path -> (mtime, size) for files that exist in DB
+        """
+        if not paths:
+            return {}
+
+        conn = self._get_connection()
+        try:
+            # Batch query - much faster than individual lookups
+            placeholders = ",".join("?" * len(paths))
+            rows = conn.execute(
+                f"SELECT path, mtime, size FROM file_meta WHERE path IN ({placeholders})",
+                paths
+            ).fetchall()
+
+            return {row["path"]: (row["mtime"], row["size"]) for row in rows}
+        finally:
+            conn.close()
+
+    def upsert_file_meta_batch(self, file_data: list[tuple[str, float, int, str]]):
+        """
+        Batch upsert file metadata.
+
+        Args:
+            file_data: List of (path, mtime, size, asset_type) tuples
+        """
+        if not file_data:
+            return
+
+        conn = self._get_connection()
+        try:
+            conn.executemany("""
+                INSERT OR REPLACE INTO file_meta (path, mtime, size, asset_type, indexed_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, file_data)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_all_indexed_paths(self) -> set[str]:
+        """Get all file paths currently in the index."""
+        conn = self._get_connection()
+        try:
+            rows = conn.execute("SELECT path FROM file_meta").fetchall()
+            return {row["path"] for row in rows}
+        finally:
+            conn.close()
+
+    def delete_file_meta(self, paths: list[str]):
+        """Delete file metadata for paths that no longer exist."""
+        if not paths:
+            return
+
+        conn = self._get_connection()
+        try:
+            placeholders = ",".join("?" * len(paths))
+            conn.execute(f"DELETE FROM file_meta WHERE path IN ({placeholders})", paths)
+            conn.commit()
+        finally:
+            conn.close()
+
     # =========================================================================
     # LIGHTWEIGHT ASSETS - Path + refs only, for low-value asset types
     # =========================================================================
@@ -778,20 +994,29 @@ class KnowledgeStore:
         Returns:
             Number of assets processed
         """
+        if not assets:
+            return 0
+
         conn = self._get_connection()
         try:
-            for asset in assets:
-                refs_json = json.dumps(asset.get("references", []))
-                conn.execute("""
-                    INSERT OR REPLACE INTO lightweight_assets
-                    (path, name, asset_type, "references", indexed_at)
-                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (
+            # Prepare batch data for executemany
+            batch_data = [
+                (
                     asset["path"],
                     asset["name"],
                     asset["asset_type"],
-                    refs_json,
-                ))
+                    json.dumps(asset.get("references", [])),
+                )
+                for asset in assets
+            ]
+
+            # Use executemany for batch insert - significantly faster than individual inserts
+            conn.executemany("""
+                INSERT OR REPLACE INTO lightweight_assets
+                (path, name, asset_type, "references", indexed_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, batch_data)
+
             conn.commit()
             return len(assets)
         finally:

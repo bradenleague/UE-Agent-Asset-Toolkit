@@ -11,6 +11,7 @@ Handles:
 Environment variables:
 - UE_INDEX_BATCH_TIMEOUT: Timeout in seconds for batch operations (default: 600)
 - UE_INDEX_ASSET_TIMEOUT: Timeout in seconds for single asset parsing (default: 60)
+- UE_INDEX_TIMING: Set to "1" to enable detailed timing instrumentation
 """
 
 import os
@@ -22,6 +23,7 @@ from typing import Optional, Callable
 import hashlib
 import subprocess
 import re
+import time
 
 # Configurable timeouts (can be overridden via environment variables)
 BATCH_TIMEOUT = int(os.environ.get("UE_INDEX_BATCH_TIMEOUT", "600"))  # 10 min default
@@ -285,10 +287,29 @@ class AssetIndexer:
                         If provided, only assets matching these types will be indexed after classification.
 
         Returns:
-            Dict with indexing statistics
+            Dict with indexing statistics (includes 'timing' dict if UE_INDEX_TIMING=1)
         """
         import tempfile
         import sys
+
+        # Initialize timing instrumentation
+        enable_timing = os.environ.get("UE_INDEX_TIMING", "0") == "1"
+        timing_data = {
+            "enabled": enable_timing,
+            "phases": {},
+            "total_start": time.perf_counter(),
+            "subprocess_calls": 0,
+            "db_writes": 0,
+        }
+
+        def record_phase(name: str, start: float, items: int = 0):
+            """Record timing for a phase."""
+            if enable_timing:
+                duration = time.perf_counter() - start
+                if name not in timing_data["phases"]:
+                    timing_data["phases"][name] = {"duration": 0, "items": 0}
+                timing_data["phases"][name]["duration"] += duration
+                timing_data["phases"][name]["items"] += items
 
         stats = {
             "total_found": 0,
@@ -304,6 +325,7 @@ class AssetIndexer:
 
         # Collect assets from all content roots with progress feedback
         assets = []
+        discovery_start = time.perf_counter()
 
         def scan_with_progress(path: Path, label: str) -> list:
             """Scan directory with periodic progress updates."""
@@ -338,15 +360,63 @@ class AssetIndexer:
                 print(f"Found {len(plugin_assets):,} assets in {mount_point}", file=sys.stderr)
 
         stats["total_found"] = len(assets)
+        record_phase("discovery", discovery_start, len(assets))
         print(f"Total: {len(assets):,} assets", file=sys.stderr)
 
         if not assets:
             return stats
 
+        # File-level change detection: skip unchanged files BEFORE parsing
+        # This is the key optimization for incremental indexing
+        if not self.force:
+            change_detect_start = time.perf_counter()
+            print("Checking for file changes...", file=sys.stderr)
+
+            # Get current file stats
+            current_stats = {}
+            for asset_path in assets:
+                try:
+                    stat = asset_path.stat()
+                    current_stats[str(asset_path)] = (stat.st_mtime, stat.st_size)
+                except OSError:
+                    pass  # File may have been deleted
+
+            # Get stored file metadata from DB
+            stored_meta = self.store.get_file_meta_batch(list(current_stats.keys()))
+
+            # Find changed/new files
+            changed_assets = []
+            unchanged_count = 0
+            for asset_path in assets:
+                path_str = str(asset_path)
+                if path_str in current_stats:
+                    current_mtime, current_size = current_stats[path_str]
+                    if path_str in stored_meta:
+                        stored_mtime, stored_size = stored_meta[path_str]
+                        # File is unchanged if mtime AND size match
+                        if abs(current_mtime - stored_mtime) < 0.001 and current_size == stored_size:
+                            unchanged_count += 1
+                            continue
+                    changed_assets.append(asset_path)
+
+            stats["unchanged"] = unchanged_count
+            record_phase("change_detection", change_detect_start, len(assets))
+
+            if unchanged_count > 0:
+                print(f"Skipping {unchanged_count:,} unchanged files, processing {len(changed_assets):,} changed/new files", file=sys.stderr)
+                assets = changed_assets
+
+            if not assets:
+                print("All files unchanged, nothing to index", file=sys.stderr)
+                timing_data["total_end"] = time.perf_counter()
+                timing_data["total_duration"] = timing_data["total_end"] - timing_data["total_start"]
+                return stats
+
         # Phase 1: Ultra-fast classification using batch-fast (header-only parsing)
         # This is 10-100x faster than batch-summary - only reads magic number and file size,
         # detects asset type from filename prefixes without loading UAssetAPI
         print("Phase 1: Fast-classifying assets (header-only)...", file=sys.stderr)
+        phase1_start = time.perf_counter()
         asset_summaries = {}  # path -> {asset_type, name, size, ...}
 
         for batch_start in range(0, len(assets), batch_size):
@@ -367,6 +437,7 @@ class AssetIndexer:
 
             try:
                 # Run batch-fast (10-100x faster than batch-summary)
+                timing_data["subprocess_calls"] += 1
                 result = subprocess.run(
                     [str(self.parser_path), "batch-fast", batch_file],
                     capture_output=True,
@@ -393,6 +464,7 @@ class AssetIndexer:
             finally:
                 os.unlink(batch_file)
 
+        record_phase("batch_fast", phase1_start, len(asset_summaries))
         print(f"Fast-classified {len(asset_summaries)} assets", file=sys.stderr)
 
         # Apply type filter if specified (for --quick mode)
@@ -433,10 +505,12 @@ class AssetIndexer:
             # Store skip-refs assets directly (fast - no parsing needed)
             if skip_refs_assets:
                 print(f"Phase 2a: Storing {len(skip_refs_assets)} assets (no refs needed)...", file=sys.stderr)
+                phase2a_start = time.perf_counter()
                 # Batch insert in chunks
                 for batch_start in range(0, len(skip_refs_assets), batch_size):
                     batch = skip_refs_assets[batch_start:batch_start + batch_size]
                     self.store.upsert_lightweight_batch(batch)
+                    timing_data["db_writes"] += len(batch)
                     stats["lightweight_indexed"] += len(batch)
                     if progress_callback:
                         progress_callback(
@@ -444,10 +518,12 @@ class AssetIndexer:
                             batch_start,
                             len(skip_refs_assets)
                         )
+                record_phase("skip_refs_store", phase2a_start, len(skip_refs_assets))
 
             # Process assets that need reference extraction
             if needs_refs_paths:
                 print(f"Phase 2b: Extracting refs from {len(needs_refs_paths)} assets...", file=sys.stderr)
+                phase2b_start = time.perf_counter()
 
                 for batch_start in range(0, len(needs_refs_paths), batch_size):
                     batch = needs_refs_paths[batch_start:batch_start + batch_size]
@@ -467,6 +543,7 @@ class AssetIndexer:
 
                     try:
                         # Run batch-refs (longer timeout for network drives/OneDrive)
+                        timing_data["subprocess_calls"] += 1
                         result = subprocess.run(
                             [str(self.parser_path), "batch-refs", batch_file],
                             capture_output=True,
@@ -498,6 +575,7 @@ class AssetIndexer:
                             # Batch insert into store
                             if batch_assets:
                                 self.store.upsert_lightweight_batch(batch_assets)
+                                timing_data["db_writes"] += len(batch_assets)
                                 stats["lightweight_indexed"] += len(batch_assets)
                     except subprocess.TimeoutExpired:
                         print(f"\nWarning: Batch timed out, skipping {len(batch)} assets", file=sys.stderr)
@@ -505,6 +583,7 @@ class AssetIndexer:
                     finally:
                         os.unlink(batch_file)
 
+                record_phase("batch_refs", phase2b_start, len(needs_refs_paths))
             print(f"Indexed {stats['lightweight_indexed']} lightweight assets", file=sys.stderr)
 
         # Phase 3: Batch semantic indexing for high-value types
@@ -529,6 +608,7 @@ class AssetIndexer:
             total_semantic = sum(len(v) for v in type_groups.values())
             if total_semantic > 0:
                 print(f"Phase 3: Batch indexing {total_semantic} semantic assets...", file=sys.stderr)
+                phase3_start = time.perf_counter()
 
                 # Process each type with its batch command
                 batch_commands = {
@@ -551,7 +631,8 @@ class AssetIndexer:
                         # Use batch command
                         result = self._batch_semantic_index(
                             paths, asset_type, batch_cmd, batch_size,
-                            progress_callback, processed, total_semantic
+                            progress_callback, processed, total_semantic,
+                            timing_data=timing_data,
                         )
                         stats["semantic_indexed"] += result["indexed"]
                         stats["errors"] += result["errors"]
@@ -572,7 +653,60 @@ class AssetIndexer:
                                 stats["errors"] += 1
                             processed += 1
 
+                record_phase("semantic_index", phase3_start, total_semantic)
                 print(f"Indexed {stats['semantic_indexed']} semantic assets", file=sys.stderr)
+
+        # Store file metadata for incremental indexing
+        # This allows future runs to skip unchanged files
+        if asset_summaries:
+            file_meta_start = time.perf_counter()
+            file_meta_data = []
+            for path_str, summary in asset_summaries.items():
+                try:
+                    p = Path(path_str)
+                    stat = p.stat()
+                    file_meta_data.append((
+                        path_str,
+                        stat.st_mtime,
+                        stat.st_size,
+                        summary.get("asset_type", "Unknown"),
+                    ))
+                except OSError:
+                    pass  # File may have been deleted
+
+            if file_meta_data:
+                self.store.upsert_file_meta_batch(file_meta_data)
+                record_phase("file_meta_store", file_meta_start, len(file_meta_data))
+
+        # Finalize timing data
+        timing_data["total_end"] = time.perf_counter()
+        timing_data["total_duration"] = timing_data["total_end"] - timing_data["total_start"]
+
+        # Print timing report if enabled
+        if enable_timing:
+            print("\n" + "=" * 60, file=sys.stderr)
+            print("TIMING REPORT", file=sys.stderr)
+            print("=" * 60, file=sys.stderr)
+            print(f"Total: {timing_data['total_duration']:.1f}s", file=sys.stderr)
+            print(f"Assets: {stats['total_found']:,}", file=sys.stderr)
+            if timing_data['total_duration'] > 0:
+                rate = stats['total_found'] / timing_data['total_duration']
+                print(f"Rate: {rate:.1f} assets/sec", file=sys.stderr)
+            print("-" * 60, file=sys.stderr)
+            for phase_name, phase_data in timing_data["phases"].items():
+                pct = (phase_data["duration"] / timing_data["total_duration"] * 100) if timing_data["total_duration"] > 0 else 0
+                rate_str = ""
+                if phase_data["items"] > 0 and phase_data["duration"] > 0:
+                    rate_str = f" ({phase_data['items'] / phase_data['duration']:.1f}/sec)"
+                print(f"  {phase_name:20s}: {phase_data['duration']:6.1f}s ({pct:5.1f}%) - {phase_data['items']:,} items{rate_str}", file=sys.stderr)
+            print("-" * 60, file=sys.stderr)
+            print(f"Subprocess calls: {timing_data['subprocess_calls']}", file=sys.stderr)
+            print(f"Database writes: {timing_data['db_writes']:,}", file=sys.stderr)
+            print("=" * 60, file=sys.stderr)
+
+        # Include timing in stats if enabled
+        if enable_timing:
+            stats["timing"] = timing_data
 
         return stats
 
@@ -1053,6 +1187,7 @@ class AssetIndexer:
         progress_callback,
         progress_offset: int,
         progress_total: int,
+        timing_data: dict = None,
     ) -> dict:
         """
         Batch index semantic assets using batch commands.
@@ -1085,6 +1220,8 @@ class AssetIndexer:
                 batch_file = f.name
 
             try:
+                if timing_data:
+                    timing_data["subprocess_calls"] += 1
                 result = subprocess.run(
                     [str(self.parser_path), batch_cmd, batch_file],
                     capture_output=True,
@@ -1093,6 +1230,11 @@ class AssetIndexer:
                 )
 
                 if result.returncode == 0:
+                    # Collect all chunks for batch insert
+                    all_chunks = []
+                    all_embeddings = []
+                    assets_processed = 0
+
                     for line in result.stdout.splitlines():
                         if not line.strip():
                             continue
@@ -1112,7 +1254,7 @@ class AssetIndexer:
                                 data, game_path, asset_name, asset_type, refs
                             )
 
-                            # Store chunks
+                            # Collect chunks and embeddings for batch insert
                             for chunk in chunks:
                                 embedding = None
                                 if self.embed_fn:
@@ -1122,12 +1264,23 @@ class AssetIndexer:
                                         chunk.embed_version = self.embed_version
                                     except Exception:
                                         pass
+                                all_chunks.append(chunk)
+                                all_embeddings.append(embedding)
 
-                                self.store.upsert_doc(chunk, embedding, force=self.force)
-
-                            stats["indexed"] += 1
+                            assets_processed += 1
                         except json.JSONDecodeError:
                             stats["errors"] += 1
+
+                    # Batch insert all chunks at once (much faster than individual inserts)
+                    if all_chunks:
+                        batch_result = self.store.upsert_docs_batch(
+                            all_chunks,
+                            embeddings=all_embeddings if self.embed_fn else None,
+                            force=self.force
+                        )
+                        if timing_data:
+                            timing_data["db_writes"] += batch_result.get("inserted", 0)
+                        stats["indexed"] += assets_processed
                 else:
                     stats["errors"] += len(batch)
             except subprocess.TimeoutExpired:

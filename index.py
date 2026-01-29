@@ -462,8 +462,13 @@ Examples:
     parser.add_argument("--rebuild-fts", action="store_true", help="Rebuild FTS5 index to fix corruption (missing row errors)")
     parser.add_argument("--status", action="store_true", help="Show detailed index statistics")
     parser.add_argument("--project", help="Override active project for this command")
+    parser.add_argument("--timing", action="store_true", help="Enable detailed timing instrumentation (also set UE_INDEX_TIMING=1)")
 
     args = parser.parse_args()
+
+    # Enable timing via environment variable if --timing flag is set
+    if getattr(args, 'timing', False):
+        os.environ["UE_INDEX_TIMING"] = "1"
 
     # Route to appropriate handler
     if args.command == "add":
