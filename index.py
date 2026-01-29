@@ -328,10 +328,16 @@ def cmd_index(args):
         plugin_paths=plugin_paths if plugin_paths else None
     )
 
-    # Progress tracking
-    batch_state = {'start_time': None, 'phase_start': None, 'last_phase': ''}
+    # Progress tracking with timestamps
+    from datetime import datetime
+    batch_state = {
+        'start_time': None,
+        'phase_start': None,
+        'last_phase': '',
+        'phase_times': {},  # phase -> (start_time, end_time)
+    }
 
-    def format_eta(seconds):
+    def format_duration(seconds):
         if seconds < 60:
             return f"{int(seconds)}s"
         elif seconds < 3600:
@@ -339,12 +345,29 @@ def cmd_index(args):
         else:
             return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
 
+    def timestamp():
+        return datetime.now().strftime("%H:%M:%S")
+
     def batch_progress(status_msg, current, total):
         now = time_module.time()
         phase = status_msg.split(':')[0] if ':' in status_msg else status_msg
+
+        # Track phase transitions with timestamps
         if phase != batch_state['last_phase']:
+            # End previous phase
+            if batch_state['last_phase'] and batch_state['last_phase'] in batch_state['phase_times']:
+                prev_start, _ = batch_state['phase_times'][batch_state['last_phase']]
+                batch_state['phase_times'][batch_state['last_phase']] = (prev_start, now)
+                prev_duration = format_duration(now - prev_start)
+                # Clear line and print completion
+                sys.stdout.write(f"\r  {batch_state['last_phase']}: done ({prev_duration})          \n")
+
+            # Start new phase
             batch_state['phase_start'] = now
             batch_state['last_phase'] = phase
+            batch_state['phase_times'][phase] = (now, None)
+            print(f"[{timestamp()}] Starting: {phase}")
+
         if batch_state['start_time'] is None:
             batch_state['start_time'] = now
 
@@ -356,7 +379,7 @@ def cmd_index(args):
                 rate = current / elapsed
                 remaining = total - current
                 if rate > 0:
-                    eta_str = f" - ETA: {format_eta(remaining / rate)}"
+                    eta_str = f" - ETA: {format_duration(remaining / rate)}"
             sys.stdout.write(f"\r  {status_msg}: [{current}/{total}] {pct}%{eta_str}          ")
         else:
             sys.stdout.write(f"\r  {status_msg}...          ")
@@ -380,10 +403,16 @@ def cmd_index(args):
             profile=profile,
         )
 
+    # Finalize last phase timing
+    end_time = time_module.time()
+    if batch_state['last_phase'] and batch_state['last_phase'] in batch_state['phase_times']:
+        prev_start, _ = batch_state['phase_times'][batch_state['last_phase']]
+        batch_state['phase_times'][batch_state['last_phase']] = (prev_start, end_time)
+
     # Show results
     sys.stdout.write("\r" + " " * 80 + "\r")
     print()
-    print("Indexing complete:")
+    print(f"[{timestamp()}] Indexing complete:")
     print(f"  Total found: {stats.get('total_found', 0)}")
     if 'lightweight_indexed' in stats:
         print(f"  Lightweight indexed: {stats.get('lightweight_indexed', 0)}")
@@ -392,6 +421,18 @@ def cmd_index(args):
         print(f"  Indexed: {stats.get('indexed', 0)}")
     print(f"  Unchanged: {stats.get('unchanged', 0)}")
     print(f"  Errors: {stats.get('errors', 0)}")
+
+    # Print timing summary
+    if batch_state['start_time']:
+        total_duration = end_time - batch_state['start_time']
+        print()
+        print("Timing:")
+        for phase, (start, end) in batch_state['phase_times'].items():
+            if end:
+                duration = format_duration(end - start)
+                print(f"  {phase}: {duration}")
+        print(f"  ─────────────────")
+        print(f"  Total: {format_duration(total_duration)}")
 
     # Rebuild FTS5 index if force was used (prevents corruption)
     if force_reindex:
