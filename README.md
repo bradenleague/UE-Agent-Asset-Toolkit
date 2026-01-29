@@ -143,9 +143,17 @@ Build the semantic index from the repo root.
 | `--all --plugins --embed` | Full index + vector embeddings (best quality) |
 | `--quick` | Only WidgetBlueprint, DataTable, MaterialInstance |
 | `--source` | C++ source files (UCLASS, UPROPERTY macros) |
-| `--path /Game/UI` | Only index assets under a specific path |
+| `--path UI` | Only index assets under a specific path (see note below) |
 | `--force` | Re-index everything (ignore fingerprint cache) |
 | `--status` | Show detailed index statistics |
+
+**Path convention:** The `--path` option uses Unreal's virtual path convention where `/Game/` maps to your `Content/` folder. Use the folder name relative to Content:
+```bash
+python index.py --all --path UI          # indexes Content/UI/
+python index.py --all --path UI/HUD      # indexes Content/UI/HUD/
+python index.py --all --path /Game/UI    # same as above (explicit form)
+```
+Do NOT use filesystem paths like `C:\Projects\MyGame\Content\UI` - use the virtual path instead.
 
 ### Recommended Workflows
 
@@ -171,10 +179,10 @@ Just the high-value types you search most often.
 
 ```bash
 # Rebuild just UI assets
-python index.py --all --path /Game/UI --force
+python index.py --all --path UI --force
 
 # Rebuild just blueprints folder
-python index.py --all --path /Game/Blueprints --force
+python index.py --all --path Blueprints --force
 
 # Rebuild C++ source only
 python index.py --source --force
