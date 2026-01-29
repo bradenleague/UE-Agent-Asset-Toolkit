@@ -328,18 +328,20 @@ def cmd_index(args):
         plugin_paths=plugin_paths if plugin_paths else None
     )
 
-    # Progress tracking with timestamps
+    # Progress tracking - clean single-line-per-phase output
     from datetime import datetime
-    batch_state = {
+    import re
+
+    progress_state = {
         'start_time': None,
         'phase_start': None,
         'last_phase': '',
-        'phase_times': {},  # phase -> (start_time, end_time)
+        'last_total': 0,
     }
 
     def format_duration(seconds):
         if seconds < 60:
-            return f"{int(seconds)}s"
+            return f"{seconds:.1f}s"
         elif seconds < 3600:
             return f"{int(seconds // 60)}m {int(seconds % 60)}s"
         else:
@@ -350,43 +352,45 @@ def cmd_index(args):
 
     def batch_progress(status_msg, current, total):
         now = time_module.time()
-        # Extract phase name, stripping batch numbers (e.g., "Fast-classifying batch 1" -> "Fast-classifying")
-        raw_phase = status_msg.split(':')[0] if ':' in status_msg else status_msg
-        # Remove " batch N" suffix to group all batches of same type
-        import re
-        phase = re.sub(r' batch \d+$', '', raw_phase)
 
-        # Track phase transitions with timestamps
-        if phase != batch_state['last_phase']:
-            # End previous phase
-            if batch_state['last_phase'] and batch_state['last_phase'] in batch_state['phase_times']:
-                prev_start, _ = batch_state['phase_times'][batch_state['last_phase']]
-                batch_state['phase_times'][batch_state['last_phase']] = (prev_start, now)
-                prev_duration = format_duration(now - prev_start)
-                # Clear line and print completion
-                sys.stdout.write(f"\r  {batch_state['last_phase']}: done ({prev_duration})          \n")
+        # Extract phase name, stripping batch numbers and normalizing
+        raw_phase = status_msg.split(':')[0] if ':' in status_msg else status_msg
+        phase = re.sub(r' batch \d+$', '', raw_phase)
+        phase = re.sub(r' \d+$', '', phase)  # Also strip trailing numbers like "Batch Blueprint 1"
+
+        # Initialize start time
+        if progress_state['start_time'] is None:
+            progress_state['start_time'] = now
+
+        # Phase transition - print completion of previous phase
+        if phase != progress_state['last_phase']:
+            if progress_state['last_phase']:
+                # Print completed phase on its own line
+                prev_duration = format_duration(now - progress_state['phase_start'])
+                prev_total = progress_state['last_total']
+                sys.stdout.write(f"\r[{timestamp()}] {progress_state['last_phase']}: {prev_total:,} done ({prev_duration})" + " " * 20 + "\n")
+                sys.stdout.flush()
 
             # Start new phase
-            batch_state['phase_start'] = now
-            batch_state['last_phase'] = phase
-            batch_state['phase_times'][phase] = (now, None)
-            print(f"[{timestamp()}] Starting: {phase}")
+            progress_state['phase_start'] = now
+            progress_state['last_phase'] = phase
+            progress_state['last_total'] = 0
 
-        if batch_state['start_time'] is None:
-            batch_state['start_time'] = now
+        # Update progress on same line (will be overwritten)
+        progress_state['last_total'] = max(progress_state['last_total'], current, total)
 
         if total > 0:
             pct = int(100 * current / total)
             eta_str = ""
-            elapsed = now - (batch_state['phase_start'] or now)
+            elapsed = now - progress_state['phase_start']
             if current > 0 and elapsed > 2:
                 rate = current / elapsed
                 remaining = total - current
                 if rate > 0:
-                    eta_str = f" - ETA: {format_duration(remaining / rate)}"
-            sys.stdout.write(f"\r  {status_msg}: [{current}/{total}] {pct}%{eta_str}          ")
+                    eta_str = f" ETA {format_duration(remaining / rate)}"
+            sys.stdout.write(f"\r[{timestamp()}] {phase}: {current:,}/{total:,} ({pct}%){eta_str}" + " " * 10)
         else:
-            sys.stdout.write(f"\r  {status_msg}...          ")
+            sys.stdout.write(f"\r[{timestamp()}] {phase}..." + " " * 20)
         sys.stdout.flush()
 
     # Run indexing - all modes now use the fast batch pipeline
@@ -407,36 +411,24 @@ def cmd_index(args):
             profile=profile,
         )
 
-    # Finalize last phase timing
+    # Finalize - print last phase completion
     end_time = time_module.time()
-    if batch_state['last_phase'] and batch_state['last_phase'] in batch_state['phase_times']:
-        prev_start, _ = batch_state['phase_times'][batch_state['last_phase']]
-        batch_state['phase_times'][batch_state['last_phase']] = (prev_start, end_time)
+    if progress_state['last_phase']:
+        prev_duration = format_duration(end_time - progress_state['phase_start'])
+        prev_total = progress_state['last_total']
+        sys.stdout.write(f"\r[{timestamp()}] {progress_state['last_phase']}: {prev_total:,} done ({prev_duration})" + " " * 20 + "\n")
 
-    # Show results
-    sys.stdout.write("\r" + " " * 80 + "\r")
+    # Clean summary
+    total_duration = format_duration(end_time - progress_state['start_time']) if progress_state['start_time'] else "0s"
+    total_found = stats.get('total_found', 0)
+    lightweight = stats.get('lightweight_indexed', 0)
+    semantic = stats.get('semantic_indexed', 0)
+    unchanged = stats.get('unchanged', 0)
+    errors = stats.get('errors', 0)
+
     print()
-    print(f"[{timestamp()}] Indexing complete:")
-    print(f"  Total found: {stats.get('total_found', 0)}")
-    if 'lightweight_indexed' in stats:
-        print(f"  Lightweight indexed: {stats.get('lightweight_indexed', 0)}")
-        print(f"  Semantic indexed: {stats.get('semantic_indexed', 0)}")
-    else:
-        print(f"  Indexed: {stats.get('indexed', 0)}")
-    print(f"  Unchanged: {stats.get('unchanged', 0)}")
-    print(f"  Errors: {stats.get('errors', 0)}")
-
-    # Print timing summary
-    if batch_state['start_time']:
-        total_duration = end_time - batch_state['start_time']
-        print()
-        print("Timing:")
-        for phase, (start, end) in batch_state['phase_times'].items():
-            if end:
-                duration = format_duration(end - start)
-                print(f"  {phase}: {duration}")
-        print(f"  ─────────────────")
-        print(f"  Total: {format_duration(total_duration)}")
+    print(f"[{timestamp()}] ✓ Complete in {total_duration}")
+    print(f"    {total_found:,} assets: {semantic:,} semantic, {lightweight:,} lightweight, {unchanged:,} unchanged, {errors} errors")
 
     # Rebuild FTS5 index if force was used (prevents corruption)
     if force_reindex:
