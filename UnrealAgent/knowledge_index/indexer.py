@@ -254,6 +254,7 @@ class AssetIndexer:
         batch_size: int = 1000,
         progress_callback: Callable[[str, int, int], None] = None,
         profile: str = "hybrid",
+        type_filter: list[str] = None,
     ) -> dict:
         """
         Index assets using batch API for massive speedup.
@@ -268,6 +269,8 @@ class AssetIndexer:
             batch_size: Assets per batch (default 1000, max 2000)
             progress_callback: Called with (status_msg, current, total)
             profile: "hybrid" (default), "lightweight-only", or "semantic-only"
+            type_filter: Optional list of asset types to include (e.g., ["WidgetBlueprint", "DataTable"])
+                        If provided, only assets matching these types will be indexed after classification.
 
         Returns:
             Dict with indexing statistics
@@ -363,6 +366,16 @@ class AssetIndexer:
                 os.unlink(batch_file)
 
         print(f"Fast-classified {len(asset_summaries)} assets", file=sys.stderr)
+
+        # Apply type filter if specified (for --quick mode)
+        if type_filter:
+            type_filter_set = set(type_filter)
+            filtered_summaries = {
+                p: s for p, s in asset_summaries.items()
+                if s.get("asset_type", "Unknown") in type_filter_set
+            }
+            print(f"Filtered to {len(filtered_summaries)} assets matching types: {type_filter}", file=sys.stderr)
+            asset_summaries = filtered_summaries
 
         # Phase 2: Batch references for lightweight assets (everything NOT semantic)
         # This includes: textures, meshes, animations, sounds, OFPA files, Unknown, etc.

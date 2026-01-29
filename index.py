@@ -362,12 +362,15 @@ def cmd_index(args):
             sys.stdout.write(f"\r  {status_msg}...          ")
         sys.stdout.flush()
 
-    # Run indexing
+    # Run indexing - all modes now use the fast batch pipeline
     if profile == "quick":
-        stats = indexer.index_folder(
+        # Quick mode: use batch-fast classification, then only index high-value types
+        stats = indexer.index_folder_batch(
             index_path,
+            batch_size=500,
+            progress_callback=batch_progress,
+            profile="semantic-only",  # Skip lightweight indexing for quick mode
             type_filter=["WidgetBlueprint", "DataTable", "MaterialInstance"],
-            progress_callback=lambda p, c, t: batch_progress(f"Indexing {p.split('/')[-1][:30]}", c, t)
         )
     else:
         stats = indexer.index_folder_batch(
