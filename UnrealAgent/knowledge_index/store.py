@@ -296,12 +296,18 @@ class KnowledgeStore:
             docs_to_insert = docs
             if not force:
                 doc_ids = [doc.doc_id for doc in docs]
-                placeholders = ",".join("?" * len(doc_ids))
-                existing = conn.execute(
-                    f"SELECT doc_id, fingerprint FROM docs WHERE doc_id IN ({placeholders})",
-                    doc_ids
-                ).fetchall()
-                existing_fps = {row["doc_id"]: row["fingerprint"] for row in existing}
+                # SQLite has a limit on query variables - chunk the lookup
+                existing_fps = {}
+                chunk_size = 500
+                for i in range(0, len(doc_ids), chunk_size):
+                    chunk = doc_ids[i:i + chunk_size]
+                    placeholders = ",".join("?" * len(chunk))
+                    existing = conn.execute(
+                        f"SELECT doc_id, fingerprint FROM docs WHERE doc_id IN ({placeholders})",
+                        chunk
+                    ).fetchall()
+                    for row in existing:
+                        existing_fps[row["doc_id"]] = row["fingerprint"]
 
                 docs_to_insert = []
                 embeddings_to_insert = []
@@ -371,8 +377,12 @@ class KnowledgeStore:
             # Batch update edges
             # First, delete all existing edges for these docs
             doc_ids_to_update = [doc.doc_id for doc in docs_to_insert]
-            placeholders = ",".join("?" * len(doc_ids_to_update))
-            conn.execute(f"DELETE FROM edges WHERE from_id IN ({placeholders})", doc_ids_to_update)
+            # SQLite has a limit on query variables - chunk the delete
+            chunk_size = 500
+            for i in range(0, len(doc_ids_to_update), chunk_size):
+                chunk = doc_ids_to_update[i:i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                conn.execute(f"DELETE FROM edges WHERE from_id IN ({placeholders})", chunk)
 
             # Then batch insert new edges
             edge_data = []
@@ -454,13 +464,18 @@ class KnowledgeStore:
 
         conn = self._get_connection()
         try:
-            placeholders = ",".join("?" * len(doc_ids))
-            rows = conn.execute(
-                f"SELECT * FROM docs WHERE doc_id IN ({placeholders})",
-                doc_ids
-            ).fetchall()
-
-            return [self._row_to_doc(row) for row in rows]
+            # SQLite has a limit on query variables - chunk the lookup
+            results = []
+            chunk_size = 500
+            for i in range(0, len(doc_ids), chunk_size):
+                chunk = doc_ids[i:i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT * FROM docs WHERE doc_id IN ({placeholders})",
+                    chunk
+                ).fetchall()
+                results.extend(self._row_to_doc(row) for row in rows)
+            return results
         finally:
             conn.close()
 
@@ -887,14 +902,20 @@ class KnowledgeStore:
 
         conn = self._get_connection()
         try:
-            # Batch query - much faster than individual lookups
-            placeholders = ",".join("?" * len(paths))
-            rows = conn.execute(
-                f"SELECT path, mtime, size FROM file_meta WHERE path IN ({placeholders})",
-                paths
-            ).fetchall()
-
-            return {row["path"]: (row["mtime"], row["size"]) for row in rows}
+            result = {}
+            # SQLite has a limit on query variables (typically 999)
+            # Chunk into batches of 500 to stay safely under the limit
+            chunk_size = 500
+            for i in range(0, len(paths), chunk_size):
+                chunk = paths[i:i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT path, mtime, size FROM file_meta WHERE path IN ({placeholders})",
+                    chunk
+                ).fetchall()
+                for row in rows:
+                    result[row["path"]] = (row["mtime"], row["size"])
+            return result
         finally:
             conn.close()
 
@@ -934,8 +955,12 @@ class KnowledgeStore:
 
         conn = self._get_connection()
         try:
-            placeholders = ",".join("?" * len(paths))
-            conn.execute(f"DELETE FROM file_meta WHERE path IN ({placeholders})", paths)
+            # SQLite has a limit on query variables - chunk into batches
+            chunk_size = 500
+            for i in range(0, len(paths), chunk_size):
+                chunk = paths[i:i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                conn.execute(f"DELETE FROM file_meta WHERE path IN ({placeholders})", chunk)
             conn.commit()
         finally:
             conn.close()
