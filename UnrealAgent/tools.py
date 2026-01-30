@@ -1117,11 +1117,6 @@ if __name__ == "__main__":
                     print(f"    {asset_type}: {count}")
         sys.exit(0)
 
-    if arg == "--index":
-        print("Deprecated: --index is no longer supported.")
-        print("Use: python tools.py --index-batch --mode full")
-        sys.exit(1)
-
     if arg == "--index-batch":
         from pathlib import Path
 
@@ -1129,6 +1124,28 @@ if __name__ == "__main__":
         mode = "full"  # default
         use_embeddings = "--embed" in sys.argv
         index_path = "/Game"  # default
+        mode_config = {
+            "full": {
+                "profile": "hybrid",
+                "summary": [
+                    "Full mode: Full coverage with two-tier strategy",
+                    "  - Lightweight (path+refs): Textures, Meshes, Animations, OFPA",
+                    "  - Semantic (full parse): Widgets, Blueprints, Materials",
+                ],
+            },
+            "quick": {
+                "profile": "quick",
+                "summary": [
+                    "Quick mode: Indexing WidgetBlueprint, DataTable, MaterialInstance only",
+                ],
+            },
+            "lightweight": {
+                "profile": "lightweight-only",
+                "summary": [
+                    "Lightweight mode: Path + refs only (skip semantic parsing)",
+                ],
+            },
+        }
 
         # Find --path argument
         for i, a in enumerate(sys.argv):
@@ -1138,21 +1155,15 @@ if __name__ == "__main__":
                     index_path = "/Game/" + index_path.lstrip("/")
                 break
 
-        # Find --mode argument or legacy positional profile
+        # Find --mode argument
         if "--mode" in sys.argv:
             try:
                 mode = sys.argv[sys.argv.index("--mode") + 1].lower()
             except IndexError:
                 print("ERROR: --mode requires a value")
                 sys.exit(1)
-        else:
-            for i, a in enumerate(sys.argv[2:], start=2):
-                if not a.startswith("-") and a != index_path:
-                    mode = a.lower()
-                    print("WARNING: Positional profile is deprecated. Use --mode <full|quick|lightweight>.")
-                    break
 
-        if mode not in ("quick", "full", "lightweight"):
+        if mode not in mode_config:
             print(f"ERROR: Unknown mode '{mode}'")
             print("Available modes:")
             print("  full         - Full coverage with two-tier strategy (~3-4 hours)")
@@ -1160,11 +1171,7 @@ if __name__ == "__main__":
             print("  lightweight  - Path + refs only, no semantic search (~20 min)")
             sys.exit(1)
 
-        profile = {
-            "full": "hybrid",
-            "quick": "quick",
-            "lightweight": "lightweight-only",
-        }[mode]
+        profile = mode_config[mode]["profile"]
 
         # Get content path from config or auto-detect
         content_path = None
@@ -1185,14 +1192,8 @@ if __name__ == "__main__":
         print(f"  Database: {db_path}")
         print()
 
-        if mode == "quick":
-            print("Quick profile: Indexing WidgetBlueprint, DataTable, MaterialInstance only")
-        elif mode == "full":
-            print("Full mode: Full coverage with two-tier strategy")
-            print("  - Lightweight (path+refs): Textures, Meshes, Animations, OFPA")
-            print("  - Semantic (full parse): Widgets, Blueprints, Materials")
-        elif mode == "lightweight":
-            print("Lightweight mode: Path + refs only (skip semantic parsing)")
+        for line in mode_config[mode]["summary"]:
+            print(line)
 
         if index_path != "/Game":
             print(f"  Path filter: {index_path}")
@@ -1377,11 +1378,6 @@ if __name__ == "__main__":
         if total_errors > 0:
             print(f"  Errors: {total_errors}")
         sys.exit(0)
-
-    if arg == "--index-all":
-        print("Deprecated: --index-all is no longer supported.")
-        print("Use: python index.py --all (assets) and python index.py --source (C++)")
-        sys.exit(1)
 
     # Configure - either by name or direct path
     try:
