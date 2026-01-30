@@ -1117,6 +1117,13 @@ if __name__ == "__main__":
                     print(f"    {asset_type}: {count}")
         sys.exit(0)
 
+    if arg == "--index-batch":
+        # Backward compatibility: --index-batch is now --index
+        print("Note: --index-batch has been renamed to --index")
+        print("Continuing with --index...")
+        print()
+        arg = "--index"
+
     if arg == "--index":
         from pathlib import Path
 
