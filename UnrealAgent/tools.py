@@ -1117,7 +1117,7 @@ if __name__ == "__main__":
                     print(f"    {asset_type}: {count}")
         sys.exit(0)
 
-    if arg == "--index-batch":
+    if arg == "--index":
         from pathlib import Path
 
         # Parse arguments
@@ -1187,7 +1187,7 @@ if __name__ == "__main__":
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         from knowledge_index import KnowledgeStore, AssetIndexer
-        print(f"Building semantic index (batch mode, mode: {mode})...")
+        print(f"Building semantic index ({mode} mode)...")
         print(f"  Content: {content_path}")
         print(f"  Database: {db_path}")
         print()

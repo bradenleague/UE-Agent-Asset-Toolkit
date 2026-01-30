@@ -288,7 +288,7 @@ Note: Quote paths containing spaces!
         else:
             print("     This may take a while for large projects...")
             result = run_command(
-                [sys.executable, "tools.py", "--index-batch", "--mode", "full"],
+                [sys.executable, "tools.py", "--index", "--mode", "full"],
                 cwd=unrealagent_dir,
                 check=False
             )
