@@ -372,6 +372,55 @@ def _compact_snippet(text: str, max_len: int = 180) -> str:
     return text[:max_len]
 
 
+def _enrich_results_with_full_docs(results: list[dict], store) -> str:
+    """Enrich narrow result sets with full doc content merged per asset path.
+
+    Replaces truncated snippets with the complete semantic doc text and
+    merged metadata so that callers rarely need a follow-up inspect_asset.
+
+    Returns detail level: "full" or "summary".
+    """
+    if not results:
+        return "summary"
+
+    paths = [r["path"] for r in results if r.get("path")]
+    if not paths:
+        return "summary"
+
+    conn = store._get_connection()
+    try:
+        placeholders = ",".join("?" * len(paths))
+        rows = conn.execute(
+            f"SELECT path, text, metadata, type FROM docs WHERE path IN ({placeholders}) ORDER BY path, type",
+            tuple(paths),
+        ).fetchall()
+
+        # Group by path
+        docs_by_path: dict[str, list] = {}
+        for row in rows:
+            docs_by_path.setdefault(row["path"], []).append(row)
+
+        for r in results:
+            path_docs = docs_by_path.get(r["path"], [])
+            if not path_docs:
+                continue
+            # Merge text from all docs for this path
+            texts = [row["text"] for row in path_docs if row["text"]]
+            if texts:
+                r["content"] = "\n\n".join(texts)
+            # Merge metadata
+            merged_meta = {}
+            for row in path_docs:
+                meta = json.loads(row["metadata"]) if row["metadata"] else {}
+                merged_meta.update(meta)
+            if merged_meta:
+                r["metadata"] = merged_meta
+    finally:
+        conn.close()
+
+    return "full"
+
+
 def _should_try_tag_search(query: str) -> bool:
     """Return True if query looks like a GameplayTag (dotted PascalCase).
 
@@ -1345,9 +1394,18 @@ def unreal_search(
     if query_mode != "trace":
         _normalize_output_scores(results)
 
+    # Enrich narrow result sets with full doc content so inspect_asset is
+    # rarely needed.  Name searches always enrich; semantic only when <=3.
+    detail_level = "summary"
+    if query_mode == "name":
+        detail_level = _enrich_results_with_full_docs(results, store)
+    elif query_mode == "semantic" and len(results) <= 3:
+        detail_level = _enrich_results_with_full_docs(results, store)
+
     return {
         "query": query,
         "search_type": query_mode,
+        "detail": detail_level,
         "count": len(results),
         "results": results[:limit],
         **({"trace": trace_payload} if query_mode == "trace" and trace_payload else {}),
