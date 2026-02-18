@@ -98,11 +98,24 @@ def _get_retriever(enable_embeddings: bool = False):
         _retriever = HybridRetriever(store, embed_fn=None)
 
     if enable_embeddings and _retriever.embed_fn is None and not _embedder_attempted:
+        enable_embeddings_runtime = os.environ.get(
+            "UNREAL_MCP_ENABLE_EMBEDDINGS", "1"
+        ).lower() in {"1", "true", "yes", "on"}
+        if not enable_embeddings_runtime:
+            _embedder_attempted = True
+            _embedder_error = (
+                "embeddings disabled in MCP runtime "
+                "(set UNREAL_MCP_ENABLE_EMBEDDINGS=1 to enable)"
+            )
+            return _retriever
+
         _embedder_attempted = True
         try:
             from knowledge_index.indexer import create_sentence_transformer_embedder
 
-            _retriever.embed_fn = create_sentence_transformer_embedder()
+            _retriever.embed_fn = create_sentence_transformer_embedder(
+                local_files_only=True
+            )
             if _retriever.embed_fn is None:
                 _embedder_error = "sentence-transformers not installed"
         except Exception as e:
@@ -212,13 +225,38 @@ def _build_semantic_snippet(doc) -> str:
 def _apply_semantic_reranking(results: list[dict], query: str):
     """Apply lightweight intent-aware reranking on semantic results."""
     intents = _detect_query_intents(query)
-    if not intents:
-        return
+    query_lower = query.lower()
+    stop_words = {
+        "the",
+        "and",
+        "or",
+        "for",
+        "with",
+        "from",
+        "into",
+        "onto",
+        "what",
+        "when",
+        "where",
+        "which",
+        "that",
+        "this",
+        "player",
+        "level",
+        "map",
+    }
+    query_tokens = [
+        tok
+        for tok in re.findall(r"[a-z0-9_]+", query_lower)
+        if len(tok) >= 4 and tok not in stop_words
+    ]
 
     for r in results:
         base_score = float(r.get("score", 0.0))
         result_type = (r.get("type") or "").lower()
         name = (r.get("name") or "").lower()
+        snippet = (r.get("snippet") or "").lower()
+        result_text = f"{name} {snippet}"
         boost = 1.0
 
         if "blueprint" in intents:
@@ -252,6 +290,32 @@ def _apply_semantic_reranking(results: list[dict], query: str):
         if "interaction" in intents:
             if result_type == "blueprint" or "bp_graph" in result_type:
                 boost *= 1.2
+
+        # Demote low-information blueprint summaries that frequently rank as noise
+        # for semantic queries (e.g., Parent: Unknown with no callable members).
+        if result_type in {"blueprint", "widgetblueprint"}:
+            has_unknown_parent = "parent: unknown" in snippet
+            has_member_signal = any(
+                token in snippet for token in ("functions:", "events:", "variables:")
+            )
+            if has_unknown_parent and not has_member_signal:
+                boost *= 0.6
+
+        # Prefer results that actually mention key query terms.
+        if query_tokens:
+            overlap = sum(1 for tok in query_tokens if tok in result_text)
+            if overlap == 0:
+                boost *= 0.65
+            elif overlap == 1:
+                boost *= 0.9
+            else:
+                boost *= 1.1
+
+        # Generic guardrail: don't over-rank Save* assets unless query asks for save semantics.
+        if "save" in name and not any(
+            t in query_lower for t in ("save", "checkpoint", "respawn", "load")
+        ):
+            boost *= 0.65
 
         r["score"] = round(base_score * boost, 3)
 
@@ -1373,10 +1437,33 @@ def unreal_search(
                 conn.close()
 
     else:  # semantic
-        retriever = _get_retriever(enable_embeddings=True)
-        # Full semantic search (FTS + vector if available)
-        bundle = retriever.retrieve(query=query, filters=type_filters, k=limit)
-        for r in bundle.results[:limit]:
+        # Broad 1-2 token queries (e.g., "player") are high-cardinality and can
+        # make vector similarity expensive on large indexes. Route these through
+        # exact FTS to keep semantic requests responsive.
+        query_words = query.strip().split()
+        is_short_keyword_query = len(query_words) <= 2 and not any(
+            w in query.lower()
+            for w in ["how", "what", "why", "where", "when", "which", "explain"]
+        )
+
+        if is_short_keyword_query:
+            retriever = _get_retriever(enable_embeddings=False)
+            semantic_results = retriever.search_exact(
+                query, filters=type_filters, k=limit
+            )
+        else:
+            retriever = _get_retriever(enable_embeddings=True)
+            # Preserve explicit semantic mode when caller selected it.
+            semantic_query_type = "semantic"
+            bundle = retriever.retrieve(
+                query=query,
+                filters=type_filters,
+                k=limit,
+                query_type=semantic_query_type,
+            )
+            semantic_results = bundle.results
+
+        for r in semantic_results[:limit]:
             if r.doc:
                 results.append(
                     {

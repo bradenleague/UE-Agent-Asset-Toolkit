@@ -12,14 +12,14 @@ AI-powered Unreal Engine asset inspection toolkit. Analyze Blueprints, Materials
 
 ## Requirements
 
-- .NET 8 SDK (for AssetParser)
+- .NET 8 SDK or later (for AssetParser)
 - Python 3.10+ (for indexer and MCP server)
 
 ## Platform Notes
 
 **Windows** (primary platform):
 - PowerShell may require `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` to run `.ps1` wrapper scripts.
-- Install .NET 8 SDK from the [official installer](https://dotnet.microsoft.com/download/dotnet/8.0).
+- Install .NET 8 SDK or later from the [official installer](https://dotnet.microsoft.com/download/dotnet/8.0).
 
 **macOS**:
 - Install .NET SDK via Homebrew: `brew install dotnet-sdk`
@@ -52,10 +52,16 @@ source .venv/bin/activate        # macOS/Linux
 python setup.py /path/to/YourProject.uproject
 
 # 4. Build the search index
-python index.py --all --plugins
+python index.py --all
+# Optional: include plugin content too (slower on large plugin-heavy projects)
+# python index.py --all --plugins
 
 # 5. Connect to your MCP client (see below)
 ```
+
+Note: the `UAssetAPI` submodule is about 70MB, so the initial clone can take a minute on slower connections.
+Important: keep the virtual environment activated before running `python setup.py` so dependencies install into `.venv` and not global Python.
+Note: in new terminal sessions, re-activate the virtual environment before running `index.py` or `UnrealAgent/mcp_server.py`.
 
 `setup.py` handles building the C# parser (UAssetAPI + AssetParser), installing Python packages, and registering your `.uproject`. Add `--index` to combine steps 3 and 4.
 
@@ -68,46 +74,40 @@ cd Tools && python setup.py ../YourProject.uproject --index
 
 ## MCP Client Setup
 
-The toolkit runs as an MCP server. After building and indexing, connect it to your AI tool:
+The toolkit runs as an MCP server over stdio. After building and indexing, register it in your MCP client config.
 
-### Claude Code
-
-Create a `.mcp.json` file in your working directory (or any parent directory):
+Most clients use a server entry similar to:
 
 ```json
 {
   "mcpServers": {
     "unreal": {
-      "command": "/path/to/UE-Agent-Asset-Toolkit/.venv/bin/python",
-      "args": ["/path/to/UE-Agent-Asset-Toolkit/UnrealAgent/mcp_server.py"]
+      "command": "/absolute/path/to/.venv/bin/python",
+      "args": ["/absolute/path/to/UE-Agent-Asset-Toolkit/UnrealAgent/mcp_server.py"]
     }
   }
 }
 ```
 
-Use absolute paths. Restart Claude Code after adding the config.
-
-### Claude Desktop
-
-Add to your Claude Desktop config:
-
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+Windows form:
 
 ```json
 {
   "mcpServers": {
     "unreal": {
-      "command": "python",
-      "args": ["/path/to/UE-Agent-Asset-Toolkit/UnrealAgent/mcp_server.py"]
+      "command": "C:\\\\absolute\\\\path\\\\to\\\\UE-Agent-Asset-Toolkit\\\\.venv\\\\Scripts\\\\python.exe",
+      "args": ["C:\\\\absolute\\\\path\\\\to\\\\UE-Agent-Asset-Toolkit\\\\UnrealAgent\\\\mcp_server.py"]
     }
   }
 }
 ```
 
-### Other MCP Clients
+Client configs differ, so always verify in your client's MCP docs:
+- config file location
+- exact JSON key names/shape
+- whether a restart is required to load new MCP servers
 
-Any MCP-compatible client can connect — just point it at `UnrealAgent/mcp_server.py` via stdio transport.
+Use absolute paths and prefer the venv Python so runtime dependencies are consistent.
 
 ## MCP Tools
 
@@ -132,24 +132,6 @@ Get detailed structured data about a specific asset:
 - **WidgetBlueprint**: widget tree hierarchy, bindings
 - **Material**: parameters (scalar, vector, texture), domain
 - **DataTable**: row structure, columns, sample data
-
-## Claude Desktop Setup
-
-Add to your Claude Desktop config:
-
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "unreal": {
-      "command": "python",
-      "args": ["/path/to/YourProject/Tools/UnrealAgent/mcp_server.py"]
-    }
-  }
-}
-```
 
 ## Project Structure
 
@@ -213,7 +195,7 @@ Build the semantic index from the repo root.
 | Command | Description |
 |---------|-------------|
 | `--all` | Full hybrid index (semantic + lightweight for all assets) |
-| `--all --plugins` | Full index including game feature plugins |
+| `--all --plugins` | Full index including plugin content (can be much slower on large projects) |
 | `--all --plugins --embed` | Full index + vector embeddings (best quality) |
 | `--quick` | Only WidgetBlueprint, DataTable, MaterialInstance |
 | `--source` | C++ source files (UCLASS, UPROPERTY macros) |
@@ -236,12 +218,19 @@ Do NOT use filesystem paths like `C:\Projects\MyGame\Content\UI` - use the virtu
 python index.py --all --plugins --embed --source
 ```
 Full coverage: all assets, all plugins, vector embeddings for semantic search, and C++ source.
+If embedding dependencies are unavailable, use `--all --plugins --source` (FTS-only search still works well).
 
-**Standard:**
+**Standard (recommended for most projects):**
+```bash
+python index.py --all
+```
+Full coverage without embeddings. FTS5 full-text search works well for most queries.
+
+**Plugin-inclusive (slower):**
 ```bash
 python index.py --all --plugins
 ```
-Full coverage without embeddings. FTS5 full-text search works well for most queries.
+Use this when you need plugin content indexed (especially Game Feature plugins). For large plugin-heavy projects this can take significantly longer.
 
 **Quick (fastest):**
 ```bash
@@ -371,6 +360,9 @@ Profiles live in `UnrealAgent/profiles/`. See:
 - **Read-only**: AssetParser cannot modify assets
 - **UE5.5+ compatibility**: Some newer assets may fail to parse
 - **Type detection**: Uses naming conventions (BP_, WBP_, DT_) which may miss non-standard names — create a [profile](#project-profiles) to handle project-specific naming
+- **Windows console encoding**: Some terminals using cp1252 can raise `UnicodeEncodeError` at the final completion line. Workaround: set UTF-8 before indexing (`$env:PYTHONUTF8=1` in PowerShell or `set PYTHONUTF8=1` in cmd.exe).
+- **RTX 50-series + torch on Windows**: Verified working with `torch==2.8.0+cu128` (CUDA) on RTX 5080. If embedding setup pulls an incompatible torch build, install:
+  `pip install "torch==2.8.0+cu128" --index-url https://download.pytorch.org/whl/cu128`
 
 ## License
 

@@ -355,6 +355,12 @@ def cmd_index(args):
         print(f"Force: enabled (will re-index all)")
     print()
 
+    from project_profile import load_profile
+    project_profile = load_profile(emit_info=False)
+    if project_profile.profile_name == "_defaults":
+        print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+        print()
+
     # Set up embeddings if requested
     embed_fn = None
     embed_model = None
@@ -376,7 +382,8 @@ def cmd_index(args):
     indexer = AssetIndexer(
         store, content_path,
         embed_fn=embed_fn, embed_model=embed_model, force=force_reindex,
-        plugin_paths=plugin_paths if plugin_paths else None
+        plugin_paths=plugin_paths if plugin_paths else None,
+        profile=project_profile,
     )
 
     # Progress tracking - clean single-line-per-phase output

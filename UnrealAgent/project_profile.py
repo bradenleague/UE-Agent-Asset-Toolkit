@@ -93,17 +93,21 @@ def _merge_profiles(defaults: dict, overlay: dict) -> dict:
     return merged
 
 
-def load_profile(profile_name: Optional[str] = None) -> ProjectProfile:
+def load_profile(
+    profile_name: Optional[str] = None, emit_info: bool = True
+) -> ProjectProfile:
     """Load and merge a project profile.
 
     Args:
         profile_name: Explicit profile name (e.g., "lyra"). If None, resolves
                       from config.json active project's "profile" field.
+        emit_info: If True, print an informational message when no project
+                   profile is configured and engine defaults are used.
 
     Returns:
         ProjectProfile with defaults merged with the named profile.
-        If no profile is configured, returns defaults only and prints
-        an info message to stderr.
+        If no profile is configured, returns defaults only and optionally
+        prints an informational message to stderr.
     """
     # Resolve name
     if profile_name is None:
@@ -121,10 +125,10 @@ def load_profile(profile_name: Optional[str] = None) -> ProjectProfile:
         overlay = _load_json_profile(profile_name)
         merged = _merge_profiles(defaults, overlay)
     else:
-        if profile_name is None:
+        if profile_name is None and emit_info:
             print(
-                "info: No project profile configured. Using engine defaults only. "
-                'Set "profile" in config.json project entry for project-specific types.',
+                "INFO: Using engine defaults. "
+                'Set "profile" in config.json project entry to enable project-specific types.',
                 file=sys.stderr,
             )
         merged = defaults

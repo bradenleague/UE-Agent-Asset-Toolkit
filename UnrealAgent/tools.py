@@ -677,6 +677,12 @@ def _list_assets_filesystem(
             f"Skipped {skipped_uncertain} assets with uncertain types. "
             "Use more specific paths or remove type_filter for complete results."
         )
+    if not type_filter and paginated_result.get("assets"):
+        if not any(asset.get("class") for asset in paginated_result["assets"]):
+            paginated_result["hint"] += (
+                " Asset class values may be null before indexing; "
+                "run `python index.py --all` to populate detailed type metadata."
+            )
     if parser_calls >= MAX_PARSER_CALLS:
         paginated_result["note"] = (
             f"Limited to {MAX_PARSER_CALLS} type detections to avoid slowdown. "
@@ -1177,8 +1183,13 @@ if __name__ == "__main__":
         print(f"  Database: {db_path}")
         print()
 
+        from project_profile import load_profile
         store = KnowledgeStore(db_path)
-        indexer = AssetIndexer(store, content_path)
+        project_profile = load_profile(emit_info=False)
+        if project_profile.profile_name == "_defaults":
+            print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+            print()
+        indexer = AssetIndexer(store, content_path, profile=project_profile)
 
         # Progress tracking with ETA
         import time as time_module
@@ -1370,7 +1381,12 @@ if __name__ == "__main__":
                 f"  Plugins: {len(plugin_paths)} found ({', '.join(mp for mp, _ in plugin_paths)})"
             )
 
+        from project_profile import load_profile
         store = KnowledgeStore(db_path)
+        project_profile = load_profile(emit_info=False)
+        if project_profile.profile_name == "_defaults":
+            print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+            print()
         indexer = AssetIndexer(
             store,
             content_path,
@@ -1378,6 +1394,7 @@ if __name__ == "__main__":
             embed_model=embed_model,
             force=force_reindex,
             plugin_paths=plugin_paths if plugin_paths else None,
+            profile=project_profile,
         )
 
         # Progress tracking with ETA
@@ -1707,7 +1724,11 @@ if __name__ == "__main__":
         # Index assets
         if content_path.exists():
             print("Indexing assets...")
-            asset_indexer = AssetIndexer(store, content_path)
+            from project_profile import load_profile
+            project_profile = load_profile(emit_info=False)
+            if project_profile.profile_name == "_defaults":
+                print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+            asset_indexer = AssetIndexer(store, content_path, profile=project_profile)
             asset_stats = asset_indexer.index_folder(
                 "/Game", progress_callback=progress
             )

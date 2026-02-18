@@ -99,6 +99,7 @@ class HybridRetriever:
         query: str,
         filters: dict = None,
         k: int = 10,
+        query_type: str | None = None,
         expand_refs: bool = False,
         ref_direction: str = "both",
         ref_depth: int = 1,
@@ -111,6 +112,8 @@ class HybridRetriever:
             query: Search query
             filters: Optional filters {type, path_prefix, module, asset_type}
             k: Number of results to return
+            query_type: Optional hint: "exact", "semantic", or "hybrid".
+                If omitted, query type is auto-classified.
             expand_refs: Whether to expand reference graph
             ref_direction: "forward", "reverse", or "both"
             ref_depth: Depth for reference expansion
@@ -119,8 +122,9 @@ class HybridRetriever:
         Returns:
             ContextBundle with search results and optional ref graph
         """
-        # Classify query
-        query_type = self._classify_query(query)
+        # Use caller-provided query type when present; otherwise auto-classify.
+        if query_type not in {"exact", "semantic", "hybrid"}:
+            query_type = self._classify_query(query)
 
         results = []
 

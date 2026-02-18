@@ -3368,12 +3368,14 @@ def create_openai_embedder(api_key: str, model: str = "text-embedding-3-small"):
         return None
 
 
-def create_sentence_transformer_embedder(model_name: str = "all-MiniLM-L6-v2"):
+def create_sentence_transformer_embedder(
+    model_name: str = "all-MiniLM-L6-v2", local_files_only: bool = False
+):
     """Create a local sentence transformer embedding function."""
     try:
         from sentence_transformers import SentenceTransformer
 
-        model = SentenceTransformer(model_name)
+        model = SentenceTransformer(model_name, local_files_only=local_files_only)
 
         def embed(text: str) -> list[float]:
             return model.encode(text[:4000], convert_to_numpy=True).tolist()
