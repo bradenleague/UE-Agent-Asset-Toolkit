@@ -18,6 +18,9 @@ venv/
 UnrealAgent/config.json
 UnrealAgent/local_config.json
 
+# Resolved profiles (auto-generated per project)
+UnrealAgent/profiles/.resolved/
+
 # Semantic Index (auto-generated per project)
 *.db
 *.sqlite
@@ -38,6 +41,7 @@ Thumbs.db
 desktop.ini
 
 # Logs
+logs/
 *.log
 
 # Temporary files
@@ -50,8 +54,14 @@ nul
 # Claude Code local settings (machine-specific paths)
 .claude/settings.local.json
 
+# MCP config (machine-specific paths)
+.mcp.json
+
 # Project-specific Claude instructions (use README.md for shared docs)
 CLAUDE.md
+
+# Test cache
+.pytest_cache/
 
 # Python virtual environment
 UnrealAgent/.venv/

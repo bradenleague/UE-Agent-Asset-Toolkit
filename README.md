@@ -15,24 +15,53 @@ AI-powered Unreal Engine asset inspection toolkit. Analyze Blueprints, Materials
 - .NET 8 SDK (for AssetParser)
 - Python 3.10+ (for indexer and MCP server)
 
+## Platform Notes
+
+**Windows** (primary platform):
+- PowerShell may require `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` to run `.ps1` wrapper scripts.
+- Install .NET 8 SDK from the [official installer](https://dotnet.microsoft.com/download/dotnet/8.0).
+
+**macOS**:
+- Install .NET SDK via Homebrew: `brew install dotnet-sdk`
+- Apple Silicon (M1/M2/M3/M4) is auto-detected — `dotnet run` uses the native `osx-arm64` runtime.
+
+**Linux**:
+- Install .NET SDK via your package manager or the [official instructions](https://learn.microsoft.com/dotnet/core/install/linux).
+
+**Virtual environment** (all platforms):
+```bash
+python -m venv .venv
+# Windows:  .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+pip install -r UnrealAgent/requirements.txt
+```
+
 ## Quick Start
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone --recursive https://github.com/bradenleague/UE-Agent-Asset-Toolkit
+cd UE-Agent-Asset-Toolkit
 
-# Or clone into your UE project as a subfolder
+# 2. Create a virtual environment and install dependencies
+python -m venv .venv
+source .venv/bin/activate        # macOS/Linux
+# .venv\Scripts\activate         # Windows
+
+# 3. Run setup — builds the parser, installs Python deps, and configures your project
+python setup.py /path/to/Project.uproject
+
+# 4. Build the search index
+python index.py --all --plugins
+```
+
+`setup.py` handles building the C# parser (UAssetAPI + AssetParser), installing Python packages, and registering your `.uproject`. Add `--index` to combine steps 3 and 4.
+
+You can also clone into your UE project as a subfolder:
+```bash
 cd YourProject
 git clone --recursive https://github.com/bradenleague/UE-Agent-Asset-Toolkit Tools
-
-# Run setup (from inside the cloned directory)
-python setup.py                                    # Build tools only
-python setup.py /path/to/Project.uproject          # Build + configure project
-python setup.py /path/to/Project.uproject --index  # Build + configure + index
-
-# Or use the wrapper scripts:
-.\setup.bat C:\Projects\MyGame\MyGame.uproject     # Windows
-./setup.sh ~/Projects/MyGame/MyGame.uproject       # macOS/Linux
+cd Tools && python setup.py ../YourProject.uproject --index
 ```
 
 ## MCP Tools
@@ -266,11 +295,37 @@ You can also edit `Tools/UnrealAgent/config.json` directly:
 }
 ```
 
+## Project Profiles
+
+Profiles configure project-specific asset types so the toolkit can classify and extract them correctly. Without a profile, the toolkit uses engine defaults — standard UE types like Blueprint, Widget, Material, DataTable work out of the box.
+
+For project-specific types (custom DataAsset subclasses, experience definitions, ability sets, etc.), create a profile JSON:
+
+```bash
+# 1. Index with defaults first
+python index.py --all --plugins
+
+# 2. Create a profile based on what you find
+#    See AGENT_PROFILE_GUIDE.md for field reference
+cp UnrealAgent/profiles/_defaults.json UnrealAgent/profiles/mygame.json
+#    Edit mygame.json with your project's types...
+
+# 3. Link it in config.json (add "profile": "mygame" to your project entry)
+
+# 4. Re-index with the profile
+python index.py --all --plugins --force
+```
+
+Profiles live in `UnrealAgent/profiles/`. See:
+- [AGENT_PROFILE_GUIDE.md](AGENT_PROFILE_GUIDE.md) — Profile field reference and discovery queries
+- [AGENT_ONBOARDING.md](AGENT_ONBOARDING.md) — Full onboarding walkthrough
+- [AGENTS.md](AGENTS.md) — Agent instructions (read automatically by AI coding agents)
+
 ## Known Limitations
 
 - **Read-only**: AssetParser cannot modify assets
 - **UE5.5+ compatibility**: Some newer assets may fail to parse
-- **Type detection**: Uses naming conventions (BP_, WBP_, DT_) which may miss non-standard names
+- **Type detection**: Uses naming conventions (BP_, WBP_, DT_) which may miss non-standard names — create a [profile](#project-profiles) to handle project-specific naming
 
 ## License
 
