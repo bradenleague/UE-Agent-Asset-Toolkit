@@ -978,6 +978,17 @@ def inspect_blueprint_graph(asset_path: str) -> str:
     return _run_asset_parser("graph", file_path)
 
 
+def inspect_blueprint_bytecode(asset_path: str) -> str:
+    """Get Blueprint bytecode as control flow graph with pseudocode.
+
+    Returns per-function control flow graphs with basic blocks, edges,
+    branch conditions, loop detection, and pseudocode for each instruction.
+    Use this to understand the precise execution logic of a Blueprint.
+    """
+    file_path = _asset_path_to_file(asset_path)
+    return _run_asset_parser("bytecode", file_path)
+
+
 def inspect_material(asset_path: str) -> str:
     """Get Material or MaterialInstance parameters.
 
@@ -1068,6 +1079,12 @@ TOOLS = [
         "name": "inspect_blueprint_graph",
         "description": "Get Blueprint visual graph: nodes, pins, connections, and data flow between them.",
         "function": inspect_blueprint_graph,
+        "parameters": {"asset_path": {"type": "string"}},
+    },
+    {
+        "name": "inspect_blueprint_bytecode",
+        "description": "Get Blueprint bytecode as control flow graph with pseudocode. Shows basic blocks, branches, loops, function calls, variable assignments, and control flow edges per function.",
+        "function": inspect_blueprint_bytecode,
         "parameters": {"asset_path": {"type": "string"}},
     },
     {

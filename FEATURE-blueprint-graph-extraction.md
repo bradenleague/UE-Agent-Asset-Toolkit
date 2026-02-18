@@ -8,9 +8,21 @@ This is the last major gap preventing full Blueprint comprehension (and eventual
 
 ## Current State
 
-`AnalyzeExpression()` in `Program.cs` walks `FunctionExport.ScriptBytecode` and flattens everything into three `HashSet<string>`: `calls`, `variables`, `casts`. The tree structure of the bytecode is discarded.
+**Phase 1 is complete.** The `graph` command (`ExtractGraph()` in Program.cs) parses K2Node
+pin data from binary `Extras` blobs and outputs full node-to-node connection graphs. Exposed
+via MCP as `inspect_blueprint_graph`. Output is JSON (should be converted to XML for
+consistency with other commands).
 
-K2Node exports (the visual Blueprint graph nodes with pin/connection data) are explicitly filtered out everywhere in the parser.
+**Phase 2 is complete.** The `bytecode` command (`ExtractBytecode()` + `BuildCFG()` +
+`ExprToString()` in Program.cs) builds proper control flow graphs from compiled Kismet
+bytecode and emits per-function pseudocode. Exposed via MCP as `inspect_blueprint_bytecode`.
+Output is XML.
+
+Validated on BP_GM (Cropout): 20 functions, 129 basic blocks, 469 pseudocode statements,
+18 loop targets detected. Also validated on BP_Interactable and BP_Player.
+
+The old flat `AnalyzeExpression()` still exists and is used by the `blueprint` command for
+call/variable lists. The new `bytecode` command supersedes it for detailed analysis.
 
 ## Two Data Sources Available
 
@@ -39,73 +51,69 @@ Key control-flow instructions:
 ### Source B: K2Node Visual Graph (Editor Metadata)
 
 - K2Nodes are `NormalExport` objects with generic `PropertyData` bags (no typed API)
-- Each node has a `Pins` array of `StructPropertyData` (`StructType="EdGraphPin"`)
+- Pin data is **not** in `PropertyData` — it's in the binary `Extras` blob, serialized by
+  `UEdGraphNode::SerializeAsOwningNode` (see `ReadOnePin()` in Program.cs for the full format)
 - Each pin contains: `PinName`, `PinType`, `Direction`, `LinkedTo[]`, `DefaultValue`
-- `LinkedTo` is an `ArrayPropertyData` of `ObjectPropertyData` (FPackageIndex references to other pin exports)
+- `LinkedTo` references use GUID-based pin IDs resolved through a global pin GUID map
 - Node identity: export class type (e.g., `K2Node_CallFunction`, `K2Node_Branch`, `K2Node_VariableGet`)
+- Node target (function/variable name) resolved from `PropertyData` (e.g., `FunctionReference.MemberName`)
 - Layout data: `NodePosX`, `NodePosY` (not needed for logic extraction)
-- `EEdGraphPinDirection` enum exists in UAssetAPI (`EGPD_Input=0`, `EGPD_Output=1`)
+- `EEdGraphPinDirection` enum: `EGPD_Input=0`, `EGPD_Output=1`
 
 ## Implementation Plan
 
-### Phase 1: K2Node Pin Extraction (quick win)
+### Phase 1: K2Node Pin Extraction — DONE
 
-Add a new parser command that reads the visual Blueprint graph and outputs node-to-node connections.
+Implemented as `graph` command in Program.cs (`ExtractGraph()`, ~250 lines) + `ReadOnePin()` binary
+pin parser (~160 lines). Exposed via MCP as `inspect_blueprint_graph` in tools.py.
 
-**Scope:**
-- New command: `graph <uasset_path>` (or extend existing `blueprint` command)
-- Walk `NormalExport` entries whose class type starts with `K2Node_`
-- Extract `Pins` array from each node's `Data` property list
-- Resolve `LinkedTo` references to build adjacency list
-- Filter out layout-only data (NodePosX/Y, tooltips, hidden pins)
-- Output as structured XML/JSON: nodes with their pins and connections
+**What it does:**
+- Walks `NormalExport` entries whose class type starts with `K2Node_`
+- Parses pin data from binary `Extras` blobs (not PropertyData — key discovery)
+- Resolves `LinkedTo` GUID references through a global pin map to build adjacency lists
+- Groups nodes by parent EdGraph (function name)
+- Filters hidden/orphaned pins and unconnected nodes
+- Resolves node targets (function names, variable names) from PropertyData structs
 
-**Output format sketch:**
+**Current output:** JSON. Should be converted to XML for consistency with `blueprint` command.
+
+**TODO:** Convert output format from JSON to XML.
+
+### Phase 2: Bytecode Control Flow Graph — DONE
+
+Implemented as `bytecode` command in Program.cs (`ExtractBytecode()` + `BuildCFG()` + `ExprToString()`,
+~450 lines C#). Exposed via MCP as `inspect_blueprint_bytecode` in tools.py.
+
+**What it does:**
+- Walks `ScriptBytecode[]`, accumulates byte offsets via `GetSize()` → builds offset→index map
+- Identifies basic block boundaries at every jump target and jump source
+- Resolves `CodeOffset` fields through offset map to block IDs
+- Handles `EX_PushExecutionFlow` / `EX_PopExecutionFlow` / `EX_PopExecutionFlowIfNot`
+- Detects loop targets via back-edge analysis (block targeting a predecessor)
+- Converts 40+ expression types to readable pseudocode (function calls, variable access,
+  assignments, casts, constants, delegates, collection ops, struct construction)
+- Filters editor noise (tracepoints, instrumentation events)
+- Outputs XML with `<block>` elements containing `<stmt>` pseudocode
+
+**Validated on Cropout:** BP_GM (20 functions, 129 blocks, 469 statements, 18 loop targets),
+BP_Interactable, BP_Player (1206 elements). Zero unhandled expression types.
+
+**Output format (actual from BP_GM Lose Check):**
 ```xml
-<graph>
-  <function name="Lose Check">
-    <node id="0" type="K2Node_CallFunction" target="Map_Find">
-      <pin name="self" direction="in" type="Object" linked="node3:ReturnValue"/>
-      <pin name="Key" direction="in" type="Enum" default="Food"/>
-      <pin name="ReturnValue" direction="out" type="Int" linked="node1:A"/>
-    </node>
-    <node id="1" type="K2Node_CallFunction" target="LessEqual_IntInt">
-      <pin name="A" direction="in" type="Int" linked="node0:ReturnValue"/>
-      <pin name="B" direction="in" type="Int" default="0"/>
-      <pin name="ReturnValue" direction="out" type="Bool" linked="node2:Condition"/>
-    </node>
-    <node id="2" type="K2Node_IfThenElse">
-      <pin name="Condition" direction="in" type="Bool" linked="node1:ReturnValue"/>
-      <pin name="Then" direction="out" type="Exec" linked="node4:Execute"/>
-    </node>
-  </function>
-</graph>
-```
-
-### Phase 2: Bytecode Control Flow Graph
-
-Build a proper CFG from the already-deserialized `ScriptBytecode[]`.
-
-**Steps:**
-1. Walk `ScriptBytecode[]`, call `expr.GetSize(asset)` to accumulate byte offsets → build `offset → index` map
-2. Identify basic block boundaries at every jump target and jump source
-3. Resolve `CodeOffset` fields through the offset map
-4. Handle `EX_PushExecutionFlow` / `EX_PopExecutionFlow` (latent action flow stack)
-5. Reconstruct expression trees per basic block (sub-expressions are already trees in UAssetAPI)
-6. Emit structured pseudocode per function
-
-**Output format sketch:**
-```
-block_0:
-  FoodCount = Map_Find(ResourceMap, E_ResourceType::Food)
-  branch (FoodCount <= 0) → block_1, fallthrough → block_2
-
-block_1:
-  EndGame(bWin=false)
-  return
-
-block_2:
-  return
+<function name="Lose Check" flags="Callable,Event">
+  <block id="0" offset="0" successors="2,1">
+    <stmt>Temp_byte_Variable = 1</stmt>
+    <stmt>CallFunc_Map_Find_ReturnValue = Default__BlueprintMapLibrary.Map_Find(Resources, Temp_byte_Variable, CallFunc_Map_Find_Value)</stmt>
+    <stmt>CallFunc_LessEqual_IntInt_ReturnValue = LessEqual_IntInt(CallFunc_Map_Find_Value, 0)</stmt>
+    <stmt>if not (CallFunc_LessEqual_IntInt_ReturnValue) goto block_2</stmt>
+  </block>
+  <block id="1" offset="141" successors="2">
+    <stmt>End Game(false)</stmt>
+  </block>
+  <block id="2" offset="159">
+    <stmt>return</stmt>
+  </block>
+</function>
 ```
 
 ### Phase 3: Hybrid Cross-Reference
@@ -121,7 +129,7 @@ Correlate K2Node graph with bytecode for maximum fidelity.
 
 | Aspect | K2Node Graph (Phase 1) | Bytecode CFG (Phase 2) | Hybrid (Phase 3) |
 |---|---|---|---|
-| Effort | Low (~200-400 lines C#) | Medium (~800-1200 lines C#) | Low (glue layer) |
+| Effort | **Done** (~410 lines C#) | **Done** (~450 lines C#) | Low (glue layer) |
 | Shows data flow | Yes (pin connections) | Partial (variable assignments) | Full |
 | Shows control flow | Partial (exec pin chains) | Full (jumps, loops, switches) | Full |
 | Shows constants/defaults | Yes (DefaultValue on pins) | Yes (EX_*Const expressions) | Full |
