@@ -407,6 +407,9 @@ try
         case "references":
             ExtractReferences(asset);
             break;
+        case "graph":
+            ExtractGraph(asset);
+            break;
         default:
             Console.WriteLine(JsonSerializer.Serialize(new { error = $"Unknown command: {command}" }));
             return 1;
@@ -1593,6 +1596,590 @@ string EscapeXml(string text)
         .Replace(">", "&gt;")
         .Replace("\"", "&quot;")
         .Replace("'", "&apos;");
+}
+
+// ============================================================================
+// GRAPH - Extract Blueprint node graph with pin connections as JSON
+// ============================================================================
+
+// --- Pin binary reader helpers ---
+
+string ReadFNameStr(BinaryReader r, IReadOnlyList<FString> nameMap)
+{
+    int idx = r.ReadInt32();
+    int num = r.ReadInt32();
+    if (idx < 0 || idx >= nameMap.Count) return $"[idx:{idx}]";
+    string name = nameMap[idx].ToString();
+    if (num > 0) name += $"_{num - 1}";
+    return name;
+}
+
+string ReadFString(BinaryReader r)
+{
+    int len = r.ReadInt32();
+    if (len == 0) return "";
+    if (len > 0)
+    {
+        var bytes = r.ReadBytes(len);
+        return System.Text.Encoding.UTF8.GetString(bytes).TrimEnd('\0');
+    }
+    else
+    {
+        int charCount = -len;
+        var bytes = r.ReadBytes(charCount * 2);
+        return System.Text.Encoding.Unicode.GetString(bytes).TrimEnd('\0');
+    }
+}
+
+// Read FText: uint32 Flags + int8 HistoryType + type-specific data
+// Source: Text.cpp FText::SerializeText, TextHistory.cpp for each type
+// Supported types: -1(None), 0(Base), 1(NamedFormat), 2(OrderedFormat),
+//   3(ArgumentFormat), 10(Transform), 11(StringTableEntry)
+// NOT yet supported: 4(AsDateTime), 5(AsDate), 6(AsTime), 7(AsNumber),
+//   8(AsCurrency), 9(AsPercent) — these require reading recursive FText +
+//   format options. Add them here if you hit "Unsupported FText HistoryType N".
+string ReadFText(BinaryReader r)
+{
+    uint flags = r.ReadUInt32();
+    sbyte historyType = r.ReadSByte();
+
+    switch (historyType)
+    {
+        case -1: // None
+        {
+            // bool bHasCultureInvariantString (serialized as uint32)
+            uint hasCultureInvariant = r.ReadUInt32();
+            if (hasCultureInvariant != 0)
+            {
+                return ReadFString(r);
+            }
+            return "";
+        }
+        case 0: // Base
+        {
+            string ns = ReadFString(r);    // Namespace
+            string key = ReadFString(r);   // Key
+            string src = ReadFString(r);   // SourceString
+            return src;
+        }
+        case 1: // NamedFormat
+        case 2: // OrderedFormat
+        case 3: // ArgumentFormat
+        {
+            // FormatText (recursive FText)
+            string fmtText = ReadFText(r);
+            // Arguments: TMap<FString, FFormatArgumentValue>
+            int argCount = r.ReadInt32();
+            for (int a = 0; a < argCount; a++)
+            {
+                ReadFString(r); // key
+                ReadFormatArgumentValue(r);
+            }
+            return fmtText;
+        }
+        case 10: // Transform
+        {
+            ReadFText(r);   // SourceText
+            r.ReadByte();   // TransformType (uint8)
+            return "";
+        }
+        case 11: // StringTableEntry
+        {
+            string tableId = ReadFString(r);
+            string key = ReadFString(r);
+            return $"[ST:{tableId}/{key}]";
+        }
+        default:
+        {
+            throw new FormatException($"Unsupported FText HistoryType {historyType} at position {r.BaseStream.Position}");
+        }
+    }
+}
+
+// Read FFormatArgumentValue: int8 TypeIndex + type-specific data
+void ReadFormatArgumentValue(BinaryReader r)
+{
+    sbyte typeIdx = r.ReadSByte();
+    switch (typeIdx)
+    {
+        case 0: r.ReadInt64(); break;   // Int
+        case 1: r.ReadUInt64(); break;  // UInt
+        case 2: r.ReadSingle(); break;  // Float
+        case 3: r.ReadDouble(); break;  // Double
+        case 4: ReadFText(r); break;    // Text (recursive)
+        case 5: r.ReadSByte(); break;   // Gender (ETextGender)
+        default: throw new FormatException($"Unknown FFormatArgumentValue type {typeIdx}");
+    }
+}
+
+Guid ReadFGuid(BinaryReader r)
+{
+    return new Guid(r.ReadBytes(16));
+}
+
+// Read a pin reference (from LinkedTo, SubPins, ParentPin, RefPassThrough)
+// Returns (owningNodeExportIndex, pinGuid) or null if null ref
+(int nodeExportIndex, Guid pinGuid)? ReadPinRef(BinaryReader r)
+{
+    uint isNull = r.ReadUInt32();
+    if (isNull != 0) return null;
+    int nodeRef = r.ReadInt32(); // FPackageIndex: positive = export index
+    var pinGuid = ReadFGuid(r);
+    return (nodeRef, pinGuid);
+}
+
+// Read FEdGraphTerminalType (for Map value types — only present when ContainerType == Map)
+// Source: EdGraphPin.cpp FEdGraphTerminalType::Serialize
+void ReadTerminalType(BinaryReader r, IReadOnlyList<FString> nameMap)
+{
+    ReadFNameStr(r, nameMap);  // TerminalCategory
+    ReadFNameStr(r, nameMap);  // TerminalSubCategory
+    r.ReadInt32();             // TerminalSubCategoryObject (UObject*)
+    r.ReadUInt32();            // bTerminalIsConst (bool as uint32)
+    r.ReadUInt32();            // bTerminalIsWeakPointer (bool as uint32)
+    r.ReadUInt32();            // bTerminalIsUObjectWrapper (UE5+ only, bool as uint32)
+}
+
+// Read FSimpleMemberReference
+void ReadSimpleMemberRef(BinaryReader r, IReadOnlyList<FString> nameMap)
+{
+    r.ReadInt32();             // MemberParent (UObject*)
+    ReadFNameStr(r, nameMap);  // MemberName (FName)
+    ReadFGuid(r);              // MemberGuid (FGuid)
+}
+
+// Reads one pin from the binary Extras blob of a K2Node export.
+// Format derived from UE 5.7 source: EdGraphPin.cpp (Pin::Serialize, FEdGraphPinType::Serialize)
+// and EdGraphNode.cpp (UEdGraphNode::SerializeAsOwningNode).
+//
+// VERSION SENSITIVITY: This assumes editor-saved (WITH_EDITOR) assets. Cooked/packaged
+// builds omit PinFriendlyName, PersistentGuid, BitField, and bSerializeAsSinglePrecisionFloat.
+// If adapting for cooked assets, skip those fields.
+//
+// UE VERSION NOTES (fields that vary by engine version):
+//   - bSerializeAsSinglePrecisionFloat: Added ~5.4-5.7 behind
+//     FUE5ReleaseStreamObjectVersion::SerializeFloatPinDefaultValuesAsSinglePrecision.
+//     If pins fail at "PinType.bSerializeAsSinglePrecisionFloat", remove that ReadUInt32().
+//   - bTerminalIsUObjectWrapper (in ReadTerminalType): UE5+ only.
+//   - SourceIndex: Conditional in source (only serialized when >=0), but appears always
+//     present in editor assets we've tested (5.5, 5.7).
+//
+// DEBUGGING: If pin parsing fails, the exception includes the field name, pin name, and
+// stream position. Compare stream position against a hex dump of the Extras blob to find
+// where the format diverges.
+ParsedPin ReadOnePin(BinaryReader r, UAsset asset, IReadOnlyList<FString> nameMap)
+{
+    var pin = new ParsedPin();
+    pin.LinkedTo = new List<(int, Guid)>();
+    long pinStart = r.BaseStream.Position;
+    string lastField = "start";
+
+    try
+    {
+        // --- From SerializePin wrapper (EdGraphNode.cpp: SerializeAsOwningNode) ---
+        lastField = "bNullPtr";
+        uint bNullPtr = r.ReadUInt32();
+        if (bNullPtr != 0) throw new FormatException($"Unexpected null pin in owning array (bNullPtr={bNullPtr})");
+
+        lastField = "SerializePin.OwningNode";
+        r.ReadInt32();
+
+        lastField = "SerializePin.PinGuid";
+        ReadFGuid(r);
+
+        // --- From Pin->Serialize ---
+        lastField = "Serialize.OwningNode";
+        r.ReadInt32();
+
+        lastField = "Serialize.PinId";
+        pin.PinId = ReadFGuid(r);
+
+        lastField = "PinName";
+        pin.Name = ReadFNameStr(r, nameMap);
+
+        lastField = "PinFriendlyName";
+        ReadFText(r); // WITH_EDITOR only — omitted in cooked builds
+
+        lastField = "SourceIndex";
+        r.ReadInt32(); // Conditional in source (only when >=0), but always present in editor assets tested so far
+
+        lastField = "PinToolTip";
+        ReadFString(r);
+
+        lastField = "Direction";
+        byte dir = r.ReadByte();
+        pin.Direction = dir == 0 ? "in" : "out";
+
+        // --- FEdGraphPinType ---
+        lastField = "PinType.PinCategory";
+        pin.Category = ReadFNameStr(r, nameMap);
+
+        lastField = "PinType.PinSubCategory";
+        pin.SubCategory = ReadFNameStr(r, nameMap);
+
+        lastField = "PinType.PinSubCategoryObject";
+        int subCatObj = r.ReadInt32();
+        pin.SubCategoryObject = subCatObj != 0
+            ? ResolvePackageIndex(asset, new FPackageIndex(subCatObj))
+            : "";
+
+        lastField = "PinType.ContainerType";
+        pin.ContainerType = r.ReadByte(); // EPinContainerType: 0=None, 1=Array, 2=Set, 3=Map
+        if (pin.ContainerType == 3) // Map: read PinValueType (FEdGraphTerminalType)
+        {
+            lastField = "PinType.PinValueType";
+            ReadTerminalType(r, nameMap);
+        }
+
+        lastField = "PinType.bIsReference";
+        r.ReadUInt32();
+
+        lastField = "PinType.bIsWeakPointer";
+        r.ReadUInt32();
+
+        lastField = "PinType.MemberRef";
+        ReadSimpleMemberRef(r, nameMap);
+
+        lastField = "PinType.bIsConst";
+        r.ReadUInt32();
+
+        lastField = "PinType.bIsUObjectWrapper";
+        r.ReadUInt32();
+
+        // UE 5.4-5.7+: bSerializeAsSinglePrecisionFloat (WITH_EDITOR + version-gated)
+        // Source: EdGraphPin.cpp lines 327-343, gated by
+        // FUE5ReleaseStreamObjectVersion::SerializeFloatPinDefaultValuesAsSinglePrecision
+        if (asset.GetEngineVersion() >= EngineVersion.VER_UE5_4)
+        {
+            lastField = "PinType.bSerializeAsSinglePrecisionFloat";
+            r.ReadUInt32();
+        }
+
+        // --- Values ---
+        lastField = "DefaultValue";
+        pin.DefaultValue = ReadFString(r);
+
+        lastField = "AutogeneratedDefaultValue";
+        pin.AutoDefault = ReadFString(r);
+
+        lastField = "DefaultObject";
+        r.ReadInt32();
+
+        lastField = "DefaultTextValue";
+        ReadFText(r);
+
+        // --- LinkedTo array ---
+        lastField = "LinkedTo.Count";
+        int linkedCount = r.ReadInt32();
+        for (int i = 0; i < linkedCount; i++)
+        {
+            lastField = $"LinkedTo[{i}]";
+            var lref = ReadPinRef(r);
+            if (lref != null) pin.LinkedTo.Add(lref.Value);
+        }
+
+        // --- SubPins array ---
+        lastField = "SubPins.Count";
+        int subPinCount = r.ReadInt32();
+        for (int i = 0; i < subPinCount; i++)
+        {
+            lastField = $"SubPins[{i}]";
+            ReadPinRef(r);
+        }
+
+        lastField = "ParentPin";
+        ReadPinRef(r);
+
+        lastField = "RefPassThrough";
+        ReadPinRef(r);
+
+        // --- Editor-only tail (WITH_EDITOR — omitted in cooked builds) ---
+        lastField = "PersistentGuid";
+        ReadFGuid(r);
+
+        lastField = "BitField";
+        uint bitField = r.ReadUInt32(); // bHidden(0), bNotConnectable(1), bDefaultValueIsReadOnly(2), bDefaultValueIsIgnored(3), bAdvancedView(4), bOrphanedPin(5)
+        pin.IsHidden = (bitField & (1 << 0)) != 0;
+        pin.IsOrphaned = (bitField & (1 << 5)) != 0;
+    }
+    catch (Exception ex)
+    {
+        long failPos = r.BaseStream.Position;
+        throw new FormatException(
+            $"Pin parse failed at field '{lastField}', pin '{pin.Name ?? "?"}', " +
+            $"stream pos {failPos}/{r.BaseStream.Length} (pin started at {pinStart}): {ex.Message}");
+    }
+
+    return pin;
+}
+
+void ExtractGraph(UAsset asset)
+{
+    var nameMap = asset.GetNameMapIndexList();
+
+    // --- Node identity lookup table ---
+    // Maps K2Node type → property names to check for a human-readable target label
+    var nodeTargetProps = new Dictionary<string, string[]>
+    {
+        ["K2Node_CallFunction"] = new[] { "FunctionReference" },
+        ["K2Node_VariableGet"] = new[] { "VariableReference" },
+        ["K2Node_VariableSet"] = new[] { "VariableReference" },
+        ["K2Node_DynamicCast"] = new[] { "TargetType" },
+        ["K2Node_CustomEvent"] = new[] { "CustomFunctionName" },
+        ["K2Node_MacroInstance"] = new[] { "MacroGraphReference" },
+        ["K2Node_Event"] = new[] { "EventReference" },
+        ["K2Node_ComponentBoundEvent"] = new[] { "DelegatePropertyName" },
+        ["K2Node_CallDelegate"] = new[] { "DelegateReference" },
+        ["K2Node_CreateDelegate"] = new[] { "SelectedFunctionName" },
+    };
+
+    string ResolveNodeTarget(NormalExport node, string nodeType)
+    {
+        if (!nodeTargetProps.TryGetValue(nodeType, out var propNames)) return null;
+
+        foreach (var propName in propNames)
+        {
+            var prop = node.Data?.FirstOrDefault(p => p.Name.ToString() == propName);
+            if (prop == null) continue;
+
+            // For struct properties (FunctionReference, VariableReference, etc.)
+            // look for MemberName inside
+            if (prop is StructPropertyData structProp)
+            {
+                var memberName = structProp.Value?.FirstOrDefault(p => p.Name.ToString() == "MemberName");
+                if (memberName != null)
+                {
+                    var val = memberName.ToString();
+                    if (!string.IsNullOrEmpty(val) && val != "None") return val;
+                }
+                // Try MemberParent for the class name
+                var memberParent = structProp.Value?.FirstOrDefault(p => p.Name.ToString() == "MemberParent");
+                if (memberParent is ObjectPropertyData objProp && objProp.Value != null && objProp.Value.Index != 0)
+                {
+                    return ResolvePackageIndex(asset, objProp.Value);
+                }
+            }
+            // For name/string properties
+            else if (prop is NamePropertyData nameProp)
+            {
+                var val = nameProp.Value?.ToString();
+                if (!string.IsNullOrEmpty(val) && val != "None") return val;
+            }
+            else if (prop is StrPropertyData strProp)
+            {
+                var val = strProp.Value?.ToString();
+                if (!string.IsNullOrEmpty(val)) return val;
+            }
+            // For object references (TargetType on DynamicCast)
+            else if (prop is ObjectPropertyData objProp2 && objProp2.Value != null && objProp2.Value.Index != 0)
+            {
+                return ResolvePackageIndex(asset, objProp2.Value);
+            }
+        }
+        return null;
+    }
+
+    // --- Build indices ---
+    // Map export index (1-based) → K2Node export
+    var k2Nodes = new Dictionary<int, NormalExport>();
+    // Map export index → EdGraph export
+    var edGraphs = new Dictionary<int, string>();
+    // Map PinId GUID → (export index, pin name) for connection resolution
+    var pinGuidMap = new Dictionary<Guid, (int exportIndex, string pinName)>();
+
+    for (int i = 0; i < asset.Exports.Count; i++)
+    {
+        var export = asset.Exports[i] as NormalExport;
+        if (export == null) continue;
+
+        var classType = export.GetExportClassType()?.ToString() ?? "";
+        if (classType.StartsWith("K2Node_") || classType == "K2Node")
+            k2Nodes[i + 1] = export;
+        else if (classType == "EdGraph")
+            edGraphs[i + 1] = export.ObjectName.ToString();
+    }
+
+    // Group K2Nodes by parent EdGraph
+    var graphNodeGroups = new Dictionary<string, List<int>>(); // graph name → list of export indices
+    foreach (var (idx, node) in k2Nodes)
+    {
+        int outerIdx = node.OuterIndex?.Index ?? 0;
+        string graphName = edGraphs.TryGetValue(outerIdx, out var name) ? name : $"Graph_{outerIdx}";
+        if (!graphNodeGroups.ContainsKey(graphName))
+            graphNodeGroups[graphName] = new List<int>();
+        graphNodeGroups[graphName].Add(idx);
+    }
+
+    // --- Parse pins for all K2Nodes ---
+    // Stores parsed pin data per export index
+    var nodePins = new Dictionary<int, List<ParsedPin>>();
+    var parseErrors = new List<object>();
+
+    foreach (var (idx, node) in k2Nodes)
+    {
+        var extras = node.Extras;
+        if (extras == null || extras.Length < 4)
+        {
+            nodePins[idx] = new List<ParsedPin>();
+            continue;
+        }
+
+        try
+        {
+            using var ms = new MemoryStream(extras);
+            using var reader = new BinaryReader(ms);
+
+            int pinCount = reader.ReadInt32();
+            if (pinCount < 0 || pinCount > 500)
+            {
+                parseErrors.Add(new { export_index = idx, error = $"Bad pin count: {pinCount}" });
+                nodePins[idx] = new List<ParsedPin>();
+                continue;
+            }
+
+            var pins = new List<ParsedPin>();
+            for (int p = 0; p < pinCount; p++)
+            {
+                var pin = ReadOnePin(reader, asset, nameMap);
+                pins.Add(pin);
+                // Register in GUID map for connection resolution
+                pinGuidMap[pin.PinId] = (idx, pin.Name);
+            }
+            nodePins[idx] = pins;
+        }
+        catch (Exception ex)
+        {
+            parseErrors.Add(new
+            {
+                export_index = idx,
+                class_type = node.GetExportClassType()?.ToString(),
+                error = ex.Message
+            });
+            nodePins[idx] = new List<ParsedPin>();
+        }
+    }
+
+    // --- Build output per function/graph ---
+    var functions = new Dictionary<string, object>();
+
+    foreach (var (graphName, nodeIndices) in graphNodeGroups)
+    {
+        var nodes = new List<object>();
+        var connections = new List<object>();
+        var connectionSet = new HashSet<string>(); // dedup key
+
+        foreach (var nodeIdx in nodeIndices)
+        {
+            if (!k2Nodes.TryGetValue(nodeIdx, out var node)) continue;
+            if (!nodePins.TryGetValue(nodeIdx, out var pins)) continue;
+
+            var classType = node.GetExportClassType()?.ToString() ?? "";
+            var shortType = classType.StartsWith("K2Node_") ? classType.Substring(7) : classType;
+            var target = ResolveNodeTarget(node, classType);
+
+            // Early-exit: skip nodes with zero connections and no meaningful pins
+            bool hasAnyConnection = pins.Any(p => p.LinkedTo.Count > 0);
+            if (!hasAnyConnection) continue;
+
+            var pinList = new List<object>();
+            foreach (var pin in pins)
+            {
+                // Skip hidden and orphaned pins
+                if (pin.IsHidden || pin.IsOrphaned) continue;
+
+                var pinObj = new Dictionary<string, object>
+                {
+                    ["name"] = pin.Name,
+                    ["direction"] = pin.Direction,
+                    ["category"] = pin.Category,
+                };
+
+                if (!string.IsNullOrEmpty(pin.SubCategoryObject))
+                    pinObj["sub_type"] = pin.SubCategoryObject;
+                if (!string.IsNullOrEmpty(pin.DefaultValue))
+                    pinObj["default"] = pin.DefaultValue;
+                if (pin.ContainerType == 1) pinObj["container"] = "array";
+                else if (pin.ContainerType == 2) pinObj["container"] = "set";
+                else if (pin.ContainerType == 3) pinObj["container"] = "map";
+
+                // Resolve connections
+                if (pin.LinkedTo.Count > 0)
+                {
+                    var connectedTo = new List<object>();
+                    foreach (var (linkedNodeRef, linkedPinGuid) in pin.LinkedTo)
+                    {
+                        if (pinGuidMap.TryGetValue(linkedPinGuid, out var resolved))
+                        {
+                            connectedTo.Add(new { node = resolved.exportIndex, pin = resolved.pinName });
+
+                            // Build deduped connection (smaller index first)
+                            int fromNode = nodeIdx, toNode = resolved.exportIndex;
+                            string fromPin = pin.Name, toPin = resolved.pinName;
+                            if (fromNode > toNode || (fromNode == toNode && string.Compare(fromPin, toPin) > 0))
+                            {
+                                (fromNode, toNode) = (toNode, fromNode);
+                                (fromPin, toPin) = (toPin, fromPin);
+                            }
+                            var key = $"{fromNode}:{fromPin}->{toNode}:{toPin}";
+                            if (connectionSet.Add(key))
+                            {
+                                connections.Add(new
+                                {
+                                    from_node = fromNode,
+                                    from_pin = fromPin,
+                                    to_node = toNode,
+                                    to_pin = toPin
+                                });
+                            }
+                        }
+                        else
+                        {
+                            connectedTo.Add(new { node = linkedNodeRef, pin = linkedPinGuid.ToString() });
+                        }
+                    }
+                    pinObj["connected_to"] = connectedTo;
+                }
+
+                pinList.Add(pinObj);
+            }
+
+            var nodeObj = new Dictionary<string, object>
+            {
+                ["id"] = nodeIdx,
+                ["type"] = shortType,
+            };
+            if (target != null) nodeObj["target"] = target;
+            nodeObj["pins"] = pinList;
+
+            nodes.Add(nodeObj);
+        }
+
+        if (nodes.Count > 0)
+        {
+            functions[graphName] = new
+            {
+                nodes = nodes,
+                connections = connections
+            };
+        }
+    }
+
+    // --- Output ---
+    var assetPath = asset.FilePath ?? "";
+    // Convert to game path if possible
+    var gamePath = assetPath;
+    var contentIdx = assetPath.IndexOf("/Content/");
+    if (contentIdx >= 0)
+        gamePath = "/Game" + assetPath.Substring(contentIdx + 8).Replace(".uasset", "");
+
+    var result = new Dictionary<string, object>
+    {
+        ["path"] = gamePath,
+        ["functions"] = functions,
+    };
+    if (parseErrors.Count > 0) result["parse_errors"] = parseErrors;
+
+    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
 }
 
 // ============================================================================
@@ -4322,4 +4909,21 @@ bool IsLikelyClassRefName(string name)
     if (name.StartsWith("SKEL_", StringComparison.Ordinal) || name.StartsWith("REINST_", StringComparison.Ordinal)) return false;
     if (name.StartsWith("K2Node_", StringComparison.Ordinal) || name.StartsWith("EdGraph", StringComparison.Ordinal)) return false;
     return true;
+}
+
+// Type declarations must follow all top-level statements
+struct ParsedPin
+{
+    public string Name;
+    public Guid PinId;
+    public string Direction; // "in" or "out"
+    public string Category;
+    public string SubCategory;
+    public string SubCategoryObject;
+    public byte ContainerType;
+    public string DefaultValue;
+    public string AutoDefault;
+    public bool IsHidden;
+    public bool IsOrphaned;
+    public List<(int nodeExportIndex, Guid pinGuid)> LinkedTo;
 }

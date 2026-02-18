@@ -967,6 +967,17 @@ def inspect_blueprint(asset_path: str) -> str:
     return _run_asset_parser("blueprint", file_path)
 
 
+def inspect_blueprint_graph(asset_path: str) -> str:
+    """Get Blueprint visual graph data: nodes, pin connections, and data flow.
+
+    Returns each function's node graph with K2Node types, pin details (name,
+    direction, type, default values), and node-to-node connections.
+    Use this to understand how a Blueprint's logic is wired together.
+    """
+    file_path = _asset_path_to_file(asset_path)
+    return _run_asset_parser("graph", file_path)
+
+
 def inspect_material(asset_path: str) -> str:
     """Get Material or MaterialInstance parameters.
 
@@ -1051,6 +1062,12 @@ TOOLS = [
         "name": "inspect_blueprint",
         "description": "Internal. Get Blueprint functions/variables. Prefer explain_asset for user queries.",
         "function": inspect_blueprint,
+        "parameters": {"asset_path": {"type": "string"}},
+    },
+    {
+        "name": "inspect_blueprint_graph",
+        "description": "Get Blueprint visual graph: nodes, pins, connections, and data flow between them.",
+        "function": inspect_blueprint_graph,
         "parameters": {"asset_path": {"type": "string"}},
     },
     {
