@@ -31,7 +31,9 @@ class ContextBundle:
         return {
             "query": self.query,
             "results": [r.to_dict() for r in self.results],
-            "expanded_refs": self.expanded_refs.to_dict() if self.expanded_refs else None,
+            "expanded_refs": self.expanded_refs.to_dict()
+            if self.expanded_refs
+            else None,
             "total_docs": self.total_docs,
             "token_estimate": self.token_estimate,
         }
@@ -126,7 +128,9 @@ class HybridRetriever:
             # Exact search first, then semantic fallback
             results = self.search_exact(query, filters, k)
             if len(results) < k // 2 and self.embed_fn:
-                semantic_results = self.search_semantic(query, filters, k - len(results))
+                semantic_results = self.search_semantic(
+                    query, filters, k - len(results)
+                )
                 results = self._merge_results(results, semantic_results)
 
         elif query_type == "semantic":
@@ -270,11 +274,38 @@ class HybridRetriever:
 
         # Short queries (likely symbol names)
         words = query_stripped.split()
-        if len(words) <= 2 and not any(w in query_stripped.lower() for w in ["how", "what", "why", "where", "when", "which", "explain", "describe"]):
+        if len(words) <= 2 and not any(
+            w in query_stripped.lower()
+            for w in [
+                "how",
+                "what",
+                "why",
+                "where",
+                "when",
+                "which",
+                "explain",
+                "describe",
+            ]
+        ):
             return "hybrid"
 
         # Natural language queries
-        if any(w in query_stripped.lower() for w in ["how", "what", "why", "where", "when", "which", "explain", "describe", "find", "show", "list"]):
+        if any(
+            w in query_stripped.lower()
+            for w in [
+                "how",
+                "what",
+                "why",
+                "where",
+                "when",
+                "which",
+                "explain",
+                "describe",
+                "find",
+                "show",
+                "list",
+            ]
+        ):
             return "semantic"
 
         return "hybrid"
@@ -286,7 +317,7 @@ class HybridRetriever:
         Converts natural language to FTS5 query syntax.
         """
         # Remove special characters that FTS5 uses
-        cleaned = re.sub(r'["\'\(\)\[\]\{\}]', '', query)
+        cleaned = re.sub(r'["\'\(\)\[\]\{\}]', "", query)
 
         # Split into words
         words = cleaned.split()
@@ -313,27 +344,32 @@ class HybridRetriever:
         self,
         primary: list[SearchResult],
         secondary: list[SearchResult],
+        k_rrf: int = 60,
     ) -> list[SearchResult]:
-        """
-        Merge and deduplicate results from multiple sources.
+        """Merge results using Reciprocal Rank Fusion (RRF).
 
-        Primary results are preferred, secondary fills gaps.
+        RRF produces a unified score from rank positions, avoiding the need
+        to normalize raw scores across different scoring systems.
+        Score = sum(1 / (k + rank)) for each source that contains the result.
         """
-        seen = set()
+        rrf_scores: dict[str, float] = {}
+        best_result: dict[str, SearchResult] = {}
+
+        for rank, r in enumerate(primary):
+            rrf_scores[r.doc_id] = rrf_scores.get(r.doc_id, 0.0) + 1.0 / (k_rrf + rank)
+            best_result[r.doc_id] = r
+
+        for rank, r in enumerate(secondary):
+            rrf_scores[r.doc_id] = rrf_scores.get(r.doc_id, 0.0) + 1.0 / (k_rrf + rank)
+            if r.doc_id not in best_result:
+                best_result[r.doc_id] = r
+
+        # Sort by fused score descending
+        ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
         merged = []
-
-        # Add primary results first
-        for r in primary:
-            if r.doc_id not in seen:
-                seen.add(r.doc_id)
-                merged.append(r)
-
-        # Add secondary results
-        for r in secondary:
-            if r.doc_id not in seen:
-                seen.add(r.doc_id)
-                merged.append(r)
-
+        for doc_id, fused_score in ranked:
+            r = best_result[doc_id]
+            merged.append(SearchResult(doc_id=r.doc_id, score=fused_score, doc=r.doc))
         return merged
 
     def _estimate_tokens(

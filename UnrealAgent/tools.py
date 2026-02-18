@@ -3,15 +3,22 @@
 Provides configuration management, asset listing, and inspection via the
 AssetParser CLI which parses .uasset files directly.
 """
+
 import subprocess
 import json
 import os
 import sys
 from typing import Optional
 
+from pathutil import to_game_path_sep
+
+# Set to True (or UE_AGENT_DEBUG=1) to see the exact commands being run
+DEBUG = os.environ.get("UE_AGENT_DEBUG", "").lower() in ("1", "true", "yes")
+
 # =============================================================================
 # Formatting Helpers
 # =============================================================================
+
 
 def format_eta(seconds: float) -> str:
     """Format seconds as human-readable duration (e.g., '2m 30s')."""
@@ -44,7 +51,7 @@ def _load_config():
     # Try to load existing config
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, 'r') as f:
+            with open(CONFIG_FILE, "r") as f:
                 config = json.load(f)
 
             active = config.get("active_project", "")
@@ -78,8 +85,11 @@ def _auto_detect_project():
     project_root = os.path.dirname(tools_parent)  # ProjectRoot
 
     # Look for .uproject files
-    uproject_files = [f for f in os.listdir(project_root)
-                      if f.endswith('.uproject')] if os.path.exists(project_root) else []
+    uproject_files = (
+        [f for f in os.listdir(project_root) if f.endswith(".uproject")]
+        if os.path.exists(project_root)
+        else []
+    )
 
     if len(uproject_files) == 1:
         uproject_path = os.path.join(project_root, uproject_files[0])
@@ -92,8 +102,10 @@ def _auto_detect_project():
         _auto_create_config(uproject_path, UE_EDITOR)
     elif len(uproject_files) > 1:
         if DEBUG:
-            print(f"[DEBUG] Multiple .uproject files found, cannot auto-detect: {uproject_files}",
-                  file=sys.stderr)
+            print(
+                f"[DEBUG] Multiple .uproject files found, cannot auto-detect: {uproject_files}",
+                file=sys.stderr,
+            )
 
 
 def _auto_create_config(project_path: str, engine_path: str):
@@ -107,28 +119,26 @@ def _auto_create_config(project_path: str, engine_path: str):
     config = {
         "active_project": project_name,
         "projects": {
-            project_name: {
-                "project_path": project_path,
-                "engine_path": engine_path
-            }
+            project_name: {"project_path": project_path, "engine_path": engine_path}
         },
-        "tools": {
-            "timeout_seconds": 120,
-            "default_asset_path": "/Game"
-        }
+        "tools": {"timeout_seconds": 120, "default_asset_path": "/Game"},
     }
 
     try:
-        with open(CONFIG_FILE, 'w') as f:
+        with open(CONFIG_FILE, "w") as f:
             json.dump(config, f, indent=2)
         if DEBUG:
-            print(f"[DEBUG] Auto-created config.json for {project_name}", file=sys.stderr)
+            print(
+                f"[DEBUG] Auto-created config.json for {project_name}", file=sys.stderr
+            )
     except Exception as e:
         if DEBUG:
             print(f"[DEBUG] Failed to auto-create config: {e}", file=sys.stderr)
 
 
-def configure(project_path: str = None, engine_path: str = None, project_name: str = None):
+def configure(
+    project_path: str = None, engine_path: str = None, project_name: str = None
+):
     """Configure the tool for a specific UE project.
 
     Args:
@@ -143,13 +153,15 @@ def configure(project_path: str = None, engine_path: str = None, project_name: s
         if not os.path.exists(CONFIG_FILE):
             raise FileNotFoundError(f"Config not found: {CONFIG_FILE}")
 
-        with open(CONFIG_FILE, 'r') as f:
+        with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
 
         projects = config.get("projects", {})
         if project_name not in projects:
             available = ", ".join(projects.keys())
-            raise ValueError(f"Project '{project_name}' not in config. Available: {available}")
+            raise ValueError(
+                f"Project '{project_name}' not in config. Available: {available}"
+            )
 
         proj_config = projects[project_name]
         project_path = proj_config.get("project_path", "")
@@ -174,17 +186,19 @@ def set_active_project(project_name: str):
     if not os.path.exists(CONFIG_FILE):
         raise FileNotFoundError(f"Config not found: {CONFIG_FILE}")
 
-    with open(CONFIG_FILE, 'r') as f:
+    with open(CONFIG_FILE, "r") as f:
         config = json.load(f)
 
     projects = config.get("projects", {})
     if project_name not in projects:
         available = ", ".join(projects.keys())
-        raise ValueError(f"Project '{project_name}' not in config. Available: {available}")
+        raise ValueError(
+            f"Project '{project_name}' not in config. Available: {available}"
+        )
 
     config["active_project"] = project_name
 
-    with open(CONFIG_FILE, 'w') as f:
+    with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=2)
 
     # Reload
@@ -194,10 +208,11 @@ def set_active_project(project_name: str):
 def _detect_engine_path(project_path: str) -> str:
     """Try to detect UE Editor path from project file."""
     import platform
+
     system = platform.system()
 
     try:
-        with open(project_path, 'r') as f:
+        with open(project_path, "r") as f:
             proj = json.load(f)
             engine_assoc = proj.get("EngineAssociation", "")
 
@@ -218,12 +233,16 @@ def _detect_engine_path(project_path: str) -> str:
                     f"/Users/Shared/Epic Games/UE_{engine_assoc}/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor",
                     f"/Users/Shared/Epic Games/UE_{engine_assoc}/Engine/Binaries/Mac/UnrealEditor-Cmd",
                     # Source builds
-                    os.path.expanduser(f"~/UnrealEngine/UE_{engine_assoc}/Engine/Binaries/Mac/UnrealEditor-Cmd"),
+                    os.path.expanduser(
+                        f"~/UnrealEngine/UE_{engine_assoc}/Engine/Binaries/Mac/UnrealEditor-Cmd"
+                    ),
                 ]
             else:
                 # Linux paths
                 possible_paths = [
-                    os.path.expanduser(f"~/UnrealEngine/UE_{engine_assoc}/Engine/Binaries/Linux/UnrealEditor-Cmd"),
+                    os.path.expanduser(
+                        f"~/UnrealEngine/UE_{engine_assoc}/Engine/Binaries/Linux/UnrealEditor-Cmd"
+                    ),
                     f"/opt/unreal-engine/UE_{engine_assoc}/Engine/Binaries/Linux/UnrealEditor-Cmd",
                 ]
 
@@ -237,7 +256,9 @@ def _detect_engine_path(project_path: str) -> str:
     return ""
 
 
-def add_project(name: str, project_path: str, engine_path: str = None, set_active: bool = True):
+def add_project(
+    name: str, project_path: str, engine_path: str = None, set_active: bool = True
+):
     """Add a new project to config.json.
 
     This allows registering any UE project from anywhere, not just when
@@ -260,7 +281,7 @@ def add_project(name: str, project_path: str, engine_path: str = None, set_activ
     if not os.path.exists(project_path):
         raise FileNotFoundError(f"Project not found: {project_path}")
 
-    if not project_path.endswith('.uproject'):
+    if not project_path.endswith(".uproject"):
         raise ValueError(f"Expected .uproject file, got: {project_path}")
 
     # Auto-detect engine if not provided
@@ -269,29 +290,26 @@ def add_project(name: str, project_path: str, engine_path: str = None, set_activ
 
     # Load or create config
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
+        with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
     else:
         config = {
             "active_project": "",
             "projects": {},
-            "tools": {
-                "timeout_seconds": 120,
-                "default_asset_path": "/Game"
-            }
+            "tools": {"timeout_seconds": 120, "default_asset_path": "/Game"},
         }
 
     # Add/update project
     config["projects"][name] = {
         "project_path": project_path,
-        "engine_path": engine_path or ""
+        "engine_path": engine_path or "",
     }
 
     if set_active:
         config["active_project"] = name
 
     # Save config
-    with open(CONFIG_FILE, 'w') as f:
+    with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=2)
 
     # Update globals if set as active
@@ -303,7 +321,7 @@ def add_project(name: str, project_path: str, engine_path: str = None, set_activ
         "name": name,
         "project_path": project_path,
         "engine_path": engine_path or "(not detected)",
-        "active": set_active
+        "active": set_active,
     }
 
 
@@ -316,12 +334,12 @@ def list_projects():
     if not os.path.exists(CONFIG_FILE):
         return {"active": None, "projects": {}}
 
-    with open(CONFIG_FILE, 'r') as f:
+    with open(CONFIG_FILE, "r") as f:
         config = json.load(f)
 
     return {
         "active": config.get("active_project", ""),
-        "projects": config.get("projects", {})
+        "projects": config.get("projects", {}),
     }
 
 
@@ -334,7 +352,7 @@ def get_active_project_name() -> Optional[str]:
     if not os.path.exists(CONFIG_FILE):
         return None
 
-    with open(CONFIG_FILE, 'r') as f:
+    with open(CONFIG_FILE, "r") as f:
         config = json.load(f)
 
     return config.get("active_project") or None
@@ -360,9 +378,6 @@ def get_project_db_path(project_name: str = None) -> str:
 
     return os.path.join(_TOOL_DIR, "data", f"{project_name}.db")
 
-
-# Set to True to see the exact commands being run
-DEBUG = os.environ.get("UE_AGENT_DEBUG", "").lower() in ("1", "true", "yes")
 
 # Plugin mount points cache: mount_point -> content_path
 # e.g., {"ShooterCore": "C:/Project/Plugins/GameFeatures/ShooterCore/Content"}
@@ -392,18 +407,22 @@ def _discover_plugins():
     for root, dirs, files in os.walk(plugins_dir):
         if os.path.basename(root) == "Content":
             # Check if this Content folder has any .uasset files
-            has_assets = any(f.endswith('.uasset') for f in files)
+            has_assets = any(f.endswith(".uasset") for f in files)
             if not has_assets:
                 # Check subdirectories
                 for d in dirs:
                     subdir = os.path.join(root, d)
-                    if any(f.endswith('.uasset') for f in os.listdir(subdir) if os.path.isfile(os.path.join(subdir, f))):
+                    if any(
+                        f.endswith(".uasset")
+                        for f in os.listdir(subdir)
+                        if os.path.isfile(os.path.join(subdir, f))
+                    ):
                         has_assets = True
                         break
                 if not has_assets:
                     # Recursively check for any .uasset
                     for _, _, subfiles in os.walk(root):
-                        if any(f.endswith('.uasset') for f in subfiles):
+                        if any(f.endswith(".uasset") for f in subfiles):
                             has_assets = True
                             break
 
@@ -413,7 +432,10 @@ def _discover_plugins():
                 if mount_point not in _plugin_paths:
                     _plugin_paths[mount_point] = root
                     if DEBUG:
-                        print(f"[DEBUG] Found plugin: {mount_point} -> {root}", file=sys.stderr)
+                        print(
+                            f"[DEBUG] Found plugin: {mount_point} -> {root}",
+                            file=sys.stderr,
+                        )
 
 
 def get_plugin_paths() -> dict[str, str]:
@@ -426,14 +448,18 @@ def get_plugin_paths() -> dict[str, str]:
 _load_config()
 
 
-
-
 # =============================================================================
 # Tool Functions - These are what the agent calls
 # =============================================================================
 
-def list_assets(path: str = "/Game", type_filter: Optional[str] = None,
-                limit: int = 50, offset: int = 0, use_ue: bool = False) -> str:
+
+def list_assets(
+    path: str = "/Game",
+    type_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    use_ue: bool = False,
+) -> str:
     """List assets in a path with pagination to avoid context bloat.
 
     By default, uses fast file-system scan (no UE required).
@@ -467,21 +493,27 @@ def list_assets(path: str = "/Game", type_filter: Optional[str] = None,
 def _paginate_results(results: list, limit: int, offset: int) -> str:
     """Apply pagination to results and return JSON with metadata."""
     total = len(results)
-    paginated = results[offset:offset + limit]
+    paginated = results[offset : offset + limit]
 
-    return json.dumps({
-        "assets": paginated,
-        "pagination": {
-            "total": total,
-            "returned": len(paginated),
-            "offset": offset,
-            "limit": limit,
-            "has_more": (offset + limit) < total
+    return json.dumps(
+        {
+            "assets": paginated,
+            "pagination": {
+                "total": total,
+                "returned": len(paginated),
+                "offset": offset,
+                "limit": limit,
+                "has_more": (offset + limit) < total,
+            },
+            "hint": f"Showing {len(paginated)} of {total} assets."
+            + (
+                f" Use offset={offset + limit} for next page."
+                if (offset + limit) < total
+                else ""
+            ),
         },
-        "hint": f"Showing {len(paginated)} of {total} assets." + (
-            f" Use offset={offset + limit} for next page." if (offset + limit) < total else ""
-        )
-    }, indent=2)
+        indent=2,
+    )
 
 
 def _guess_asset_type_from_name(asset_name: str, file_path: str) -> Optional[str]:
@@ -529,9 +561,10 @@ def _guess_asset_type_from_name(asset_name: str, file_path: str) -> Optional[str
     if name_lower.startswith("ge_"):
         return "GameplayEffect"
 
-    # Lyra-specific patterns (less strict prefixes)
+    # Project-specific patterns (less strict prefixes)
     if name_lower.startswith("w_") and ("/ui/" in path_lower or "widget" in name_lower):
         return "WidgetBlueprint"
+    # TODO(P1): replace with profile-driven path patterns
     if name_lower.startswith("b_") and "/experiences/" in path_lower:
         return "Blueprint"  # Experience blueprints
 
@@ -545,8 +578,12 @@ def _guess_asset_type_from_name(asset_name: str, file_path: str) -> Optional[str
     return None
 
 
-def _list_assets_filesystem(path: str = "/Game", type_filter: Optional[str] = None,
-                            limit: int = 50, offset: int = 0) -> str:
+def _list_assets_filesystem(
+    path: str = "/Game",
+    type_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> str:
     """List assets by scanning the Content folder directly with pagination.
 
     Type filtering uses fast naming convention heuristics first, then falls back
@@ -587,7 +624,7 @@ def _list_assets_filesystem(path: str = "/Game", type_filter: Optional[str] = No
     for file_path in files:
         # Convert file path back to asset path
         rel_path = os.path.relpath(file_path, os.path.join(project_dir, "Content"))
-        asset_path = "/Game/" + rel_path.replace("\\", "/").replace(".uasset", "")
+        asset_path = "/Game/" + to_game_path_sep(rel_path).replace(".uasset", "")
         asset_name = os.path.basename(file_path).replace(".uasset", "")
 
         asset_class = None
@@ -608,7 +645,7 @@ def _list_assets_filesystem(path: str = "/Game", type_filter: Optional[str] = No
                         [asset_parser, "summary", file_path],
                         capture_output=True,
                         text=True,
-                        timeout=5
+                        timeout=5,
                     )
                     parser_calls += 1
                     if result.returncode == 0:
@@ -616,7 +653,12 @@ def _list_assets_filesystem(path: str = "/Game", type_filter: Optional[str] = No
                         asset_class = summary.get("asset_type", "Unknown")
                         if asset_class != type_filter:
                             continue
-                except (subprocess.TimeoutExpired, subprocess.SubprocessError, json.JSONDecodeError, OSError):
+                except (
+                    subprocess.TimeoutExpired,
+                    subprocess.SubprocessError,
+                    json.JSONDecodeError,
+                    OSError,
+                ):
                     skipped_uncertain += 1
                     continue
             else:
@@ -624,11 +666,7 @@ def _list_assets_filesystem(path: str = "/Game", type_filter: Optional[str] = No
                 skipped_uncertain += 1
                 continue
 
-        results.append({
-            "path": asset_path,
-            "name": asset_name,
-            "class": asset_class
-        })
+        results.append({"path": asset_path, "name": asset_name, "class": asset_class})
 
     # Apply pagination
     paginated_result = json.loads(_paginate_results(results, limit, offset))
@@ -682,27 +720,34 @@ def list_asset_folders(path: str = "/Game") -> str:
             # Count assets in this folder (recursive)
             pattern = os.path.join(item_path, "**", "*.uasset")
             asset_count = len(globmod.glob(pattern, recursive=True))
-            folders.append({
-                "name": item,
-                "path": f"{path.rstrip('/')}/{item}",
-                "asset_count": asset_count
-            })
+            folders.append(
+                {
+                    "name": item,
+                    "path": f"{path.rstrip('/')}/{item}",
+                    "asset_count": asset_count,
+                }
+            )
         elif item.endswith(".uasset"):
             direct_assets += 1
 
     # Sort by asset count descending
     folders.sort(key=lambda x: x["asset_count"], reverse=True)
 
-    return json.dumps({
-        "path": path,
-        "folders": folders,
-        "direct_assets": direct_assets,
-        "total_subfolders": len(folders),
-        "hint": "Use list_assets with a specific folder path to see assets in that folder."
-    }, indent=2)
+    return json.dumps(
+        {
+            "path": path,
+            "folders": folders,
+            "direct_assets": direct_assets,
+            "total_subfolders": len(folders),
+            "hint": "Use list_assets with a specific folder path to see assets in that folder.",
+        },
+        indent=2,
+    )
 
 
-def inspect_asset(asset_path: str, summarize: bool = False, type_only: bool = False) -> str:
+def inspect_asset(
+    asset_path: str, summarize: bool = False, type_only: bool = False
+) -> str:
     """Get all properties and values of an asset.
 
     Uses AssetParser (C# tool) to parse the .uasset binary directly.
@@ -753,8 +798,6 @@ def inspect_asset(asset_path: str, summarize: bool = False, type_only: bool = Fa
         return _run_asset_parser("inspect", file_path)
 
 
-
-
 def _get_asset_parser_path() -> str:
     """Get path to AssetParser CLI executable.
 
@@ -779,6 +822,7 @@ def _get_asset_parser_path() -> str:
 
     # Platform-specific defaults
     import platform
+
     system = platform.system()
     machine = platform.machine()
 
@@ -812,9 +856,7 @@ def _asset_path_to_file(asset_path: str) -> str:
     if asset_path.startswith("/Game/"):
         relative_path = asset_path[6:]  # Remove "/Game/"
         return os.path.join(
-            os.path.dirname(PROJECT),
-            "Content",
-            relative_path + ".uasset"
+            os.path.dirname(PROJECT), "Content", relative_path + ".uasset"
         )
 
     # Handle plugin paths (e.g., /ShooterCore/, /LyraExampleContent/)
@@ -831,8 +873,7 @@ def _asset_path_to_file(asset_path: str) -> str:
                 # Found matching plugin
                 relative_path = "/".join(parts[2:])  # e.g., "UI/Widget"
                 return os.path.join(
-                    _plugin_paths[mount_point],
-                    relative_path + ".uasset"
+                    _plugin_paths[mount_point], relative_path + ".uasset"
                 )
 
     # Fallback: return as-is (might already be a filesystem path)
@@ -856,27 +897,33 @@ def _run_asset_parser(command: str, file_path: str) -> str:
     asset_parser = _get_asset_parser_path()
 
     if not os.path.exists(asset_parser):
-        return json.dumps({
-            "error": "AssetParser not built",
-            "hint": "Run: cd Tools/AssetParser && dotnet build -c Release"
-        }, indent=2)
+        return json.dumps(
+            {
+                "error": "AssetParser not built",
+                "hint": "Run: cd Tools/AssetParser && dotnet build -c Release",
+            },
+            indent=2,
+        )
 
     try:
         result = subprocess.run(
             [asset_parser, command, file_path],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
         )
 
         if result.returncode == 0:
             return result.stdout
         else:
-            return json.dumps({
-                "error": f"AssetParser {command} failed",
-                "stderr": result.stderr[:500] if result.stderr else "",
-                "stdout": result.stdout[:500] if result.stdout else ""
-            }, indent=2)
+            return json.dumps(
+                {
+                    "error": f"AssetParser {command} failed",
+                    "stderr": result.stderr[:500] if result.stderr else "",
+                    "stdout": result.stdout[:500] if result.stdout else "",
+                },
+                indent=2,
+            )
 
     except subprocess.TimeoutExpired:
         return json.dumps({"error": "AssetParser timed out"}, indent=2)
@@ -892,8 +939,6 @@ def inspect_widget(asset_path: str) -> str:
     """
     file_path = _asset_path_to_file(asset_path)
     return _run_asset_parser("widgets", file_path)
-
-
 
 
 def inspect_datatable(asset_path: str) -> str:
@@ -961,9 +1006,7 @@ TOOLS = [
         "name": "list_asset_folders",
         "description": "Internal. List subfolders and asset counts. Prefer explore_folder for user queries.",
         "function": list_asset_folders,
-        "parameters": {
-            "path": {"type": "string", "default": "/Game"}
-        }
+        "parameters": {"path": {"type": "string", "default": "/Game"}},
     },
     {
         "name": "list_assets",
@@ -973,8 +1016,8 @@ TOOLS = [
             "path": {"type": "string", "default": "/Game"},
             "type_filter": {"type": "string", "optional": True},
             "limit": {"type": "integer", "default": 50},
-            "offset": {"type": "integer", "default": 0}
-        }
+            "offset": {"type": "integer", "default": 0},
+        },
     },
     {
         "name": "inspect_asset",
@@ -983,49 +1026,39 @@ TOOLS = [
         "parameters": {
             "asset_path": {"type": "string"},
             "summarize": {"type": "boolean", "default": False, "optional": True},
-            "type_only": {"type": "boolean", "default": False, "optional": True}
-        }
+            "type_only": {"type": "boolean", "default": False, "optional": True},
+        },
     },
     {
         "name": "inspect_widget",
         "description": "Internal. Get widget hierarchy. Prefer explain_asset for user queries.",
         "function": inspect_widget,
-        "parameters": {
-            "asset_path": {"type": "string"}
-        }
+        "parameters": {"asset_path": {"type": "string"}},
     },
     {
         "name": "inspect_datatable",
         "description": "Internal. Get DataTable rows. Prefer explain_asset for user queries.",
         "function": inspect_datatable,
-        "parameters": {
-            "asset_path": {"type": "string"}
-        }
+        "parameters": {"asset_path": {"type": "string"}},
     },
     {
         "name": "inspect_blueprint",
         "description": "Internal. Get Blueprint functions/variables. Prefer explain_asset for user queries.",
         "function": inspect_blueprint,
-        "parameters": {
-            "asset_path": {"type": "string"}
-        }
+        "parameters": {"asset_path": {"type": "string"}},
     },
     {
         "name": "inspect_material",
         "description": "Internal. Get Material parameters. Prefer explain_asset for user queries.",
         "function": inspect_material,
-        "parameters": {
-            "asset_path": {"type": "string"}
-        }
+        "parameters": {"asset_path": {"type": "string"}},
     },
     {
         "name": "inspect_materialfunction",
         "description": "Internal. Get MaterialFunction inputs/outputs/parameters. Prefer explain_asset for user queries.",
         "function": inspect_materialfunction,
-        "parameters": {
-            "asset_path": {"type": "string"}
-        }
-    }
+        "parameters": {"asset_path": {"type": "string"}},
+    },
 ]
 
 
@@ -1058,7 +1091,7 @@ if __name__ == "__main__":
     # List projects
     if arg == "--list":
         if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r') as f:
+            with open(CONFIG_FILE, "r") as f:
                 config = json.load(f)
             active = config.get("active_project", "")
             projects = config.get("projects", {})
@@ -1073,6 +1106,7 @@ if __name__ == "__main__":
     # Semantic index commands
     if arg == "--index-status":
         from pathlib import Path
+
         db_path = Path(get_project_db_path())
 
         if not db_path.exists():
@@ -1082,10 +1116,11 @@ if __name__ == "__main__":
             sys.exit(1)
 
         from knowledge_index import KnowledgeStore
+
         store = KnowledgeStore(db_path)
         status = store.get_status()
 
-        print(f"Semantic Index Status")
+        print("Semantic Index Status")
         print(f"  Database: {db_path}")
         print(f"  Total documents: {status.total_docs}")
         print(f"  Total edges: {status.total_edges}")
@@ -1108,7 +1143,7 @@ if __name__ == "__main__":
             print(f"  Total C++ documents: {cpp_count}")
 
         # Show lightweight assets summary
-        if hasattr(status, 'lightweight_total') and status.lightweight_total > 0:
+        if hasattr(status, "lightweight_total") and status.lightweight_total > 0:
             print()
             print("Lightweight Assets (path + refs only):")
             print(f"  Total: {status.lightweight_total}")
@@ -1127,14 +1162,17 @@ if __name__ == "__main__":
 
         if not content_path or not content_path.exists():
             print("ERROR: Could not find Content folder")
-            print("Make sure config.json is set up or a .uproject file is in the parent directory")
+            print(
+                "Make sure config.json is set up or a .uproject file is in the parent directory"
+            )
             sys.exit(1)
 
         db_path = Path(get_project_db_path())
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         from knowledge_index import KnowledgeStore, AssetIndexer
-        print(f"Building semantic index...")
+
+        print("Building semantic index...")
         print(f"  Content: {content_path}")
         print(f"  Database: {db_path}")
         print()
@@ -1144,9 +1182,9 @@ if __name__ == "__main__":
 
         # Progress tracking with ETA
         import time as time_module
-        spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-        progress_state = {'idx': 0, 'start_time': time_module.time(), 'last_update': 0}
 
+        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        progress_state = {"idx": 0, "start_time": time_module.time(), "last_update": 0}
 
         def progress(path, current, total):
             # Get asset name from path
@@ -1155,7 +1193,7 @@ if __name__ == "__main__":
                 asset_name = asset_name[:32] + "..."
 
             # Calculate ETA
-            elapsed = time_module.time() - progress_state['start_time']
+            elapsed = time_module.time() - progress_state["start_time"]
             eta_str = ""
             if current > 0 and elapsed > 2:  # Wait 2s before showing ETA
                 rate = current / elapsed
@@ -1165,10 +1203,12 @@ if __name__ == "__main__":
                     eta_str = f" - ETA: {format_eta(eta_seconds)}"
 
             # Update progress line (overwrite previous)
-            spinner = spinner_chars[progress_state['idx'] % len(spinner_chars)]
-            progress_state['idx'] += 1
+            spinner = spinner_chars[progress_state["idx"] % len(spinner_chars)]
+            progress_state["idx"] += 1
             pct = int(100 * current / total) if total > 0 else 0
-            sys.stdout.write(f"\r  {spinner} [{current}/{total}] {pct}%{eta_str} - {asset_name:<30}")
+            sys.stdout.write(
+                f"\r  {spinner} [{current}/{total}] {pct}%{eta_str} - {asset_name:<30}"
+            )
             sys.stdout.flush()
 
         stats = indexer.index_folder("/Game", progress_callback=progress)
@@ -1181,10 +1221,10 @@ if __name__ == "__main__":
         print(f"  Indexed: {stats.get('indexed', 0)}")
         print(f"  Unchanged: {stats.get('unchanged', 0)}")
         print(f"  Errors: {stats.get('errors', 0)}")
-        if stats.get('by_type'):
+        if stats.get("by_type"):
             print()
             print("By type:")
-            for asset_type, count in sorted(stats['by_type'].items()):
+            for asset_type, count in sorted(stats["by_type"].items()):
                 print(f"  {asset_type}: {count}")
         sys.exit(0)
 
@@ -1194,7 +1234,11 @@ if __name__ == "__main__":
         # Parse arguments
         profile = "hybrid"  # default
         use_embeddings = "--embed" in sys.argv
+        force_reindex = "--force" in sys.argv
         index_path = "/Game"  # default
+        batch_size = 500  # default
+        max_assets = None  # default (no limit)
+        type_filter = None  # default (all types)
 
         # Find --path argument
         for i, a in enumerate(sys.argv):
@@ -1202,19 +1246,52 @@ if __name__ == "__main__":
                 index_path = sys.argv[i + 1]
                 if not index_path.startswith("/Game"):
                     index_path = "/Game/" + index_path.lstrip("/")
-                break
+            elif a == "--batch-size" and i + 1 < len(sys.argv):
+                try:
+                    batch_size = max(10, min(2000, int(sys.argv[i + 1])))
+                except ValueError:
+                    pass
+            elif a == "--max-assets" and i + 1 < len(sys.argv):
+                try:
+                    max_assets = max(1, int(sys.argv[i + 1]))
+                except ValueError:
+                    pass
+            elif a == "--type-filter" and i + 1 < len(sys.argv):
+                type_filter = [
+                    t.strip() for t in sys.argv[i + 1].split(",") if t.strip()
+                ]
 
-        # Find profile arg (first non-flag arg after --index-batch)
+        # Find profile arg (first non-flag arg after --index-batch).
+        # Skip values that belong to --flag arguments.
+        _flag_args = {"--path", "--batch-size", "--max-assets", "--type-filter"}
+        skip_next = False
         for i, a in enumerate(sys.argv[2:], start=2):
+            if skip_next:
+                skip_next = False
+                continue
+            if a in _flag_args:
+                skip_next = True
+                continue
             if not a.startswith("-") and a != index_path:
                 profile = a.lower()
-                if profile not in ("quick", "hybrid", "lightweight-only", "semantic-only"):
+                if profile not in (
+                    "quick",
+                    "hybrid",
+                    "lightweight-only",
+                    "semantic-only",
+                ):
                     print(f"ERROR: Unknown profile '{profile}'")
                     print("Available profiles:")
                     print("  quick           - Index high-value types only (~10 min)")
-                    print("  hybrid          - Full coverage with two-tier strategy (~3-4 hours)")
-                    print("  lightweight-only - Path + refs only, no semantic search (~20 min)")
-                    print("  semantic-only   - Semantic types only, skip lightweight (~2-4 hours)")
+                    print(
+                        "  hybrid          - Full coverage with two-tier strategy (~3-4 hours)"
+                    )
+                    print(
+                        "  lightweight-only - Path + refs only, no semantic search (~20 min)"
+                    )
+                    print(
+                        "  semantic-only   - Semantic types only, skip lightweight (~2-4 hours)"
+                    )
                     sys.exit(1)
                 break
 
@@ -1225,20 +1302,32 @@ if __name__ == "__main__":
 
         if not content_path or not content_path.exists():
             print("ERROR: Could not find Content folder")
-            print("Make sure config.json is set up or a .uproject file is in the parent directory")
+            print(
+                "Make sure config.json is set up or a .uproject file is in the parent directory"
+            )
             sys.exit(1)
 
         db_path = Path(get_project_db_path())
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         from knowledge_index import KnowledgeStore, AssetIndexer
+
         print(f"Building semantic index (batch mode, profile: {profile})...")
         print(f"  Content: {content_path}")
         print(f"  Database: {db_path}")
+        print(f"  Batch size: {batch_size}")
+        if force_reindex:
+            print("  Force: re-indexing all assets (ignoring fingerprints)")
+        if max_assets:
+            print(f"  Max assets: {max_assets}")
+        if type_filter:
+            print(f"  Type filter: {', '.join(type_filter)}")
         print()
 
         if profile == "quick":
-            print("Quick profile: Indexing WidgetBlueprint, DataTable, MaterialInstance only")
+            print(
+                "Quick profile: Indexing WidgetBlueprint, DataTable, MaterialInstance only"
+            )
         elif profile == "hybrid":
             print("Hybrid profile: Full coverage with two-tier strategy")
             print("  - Lightweight (path+refs): Textures, Meshes, Animations, OFPA")
@@ -1255,20 +1344,31 @@ if __name__ == "__main__":
             print("Loading sentence-transformers for embeddings...")
             try:
                 from knowledge_index.indexer import create_sentence_transformer_embedder
+
                 embed_fn = create_sentence_transformer_embedder()
                 embed_model = "all-MiniLM-L6-v2"
                 print(f"  Model: {embed_model}")
                 # Warm up the model
                 _ = embed_fn("warmup")
                 print("  Embeddings enabled")
-            except ImportError as e:
-                print(f"  WARNING: sentence-transformers not installed, skipping embeddings")
-                print(f"  Install with: pip install sentence-transformers")
+            except ImportError:
+                print(
+                    "  WARNING: sentence-transformers not installed, skipping embeddings"
+                )
+                print("  Install with: pip install sentence-transformers")
                 embed_fn = None
             except Exception as e:
                 print(f"  WARNING: Failed to load embeddings: {e}")
                 embed_fn = None
         print()
+
+        # Discover plugin content folders so they get indexed too
+        _discover_plugins()
+        plugin_paths = [(mp, Path(cp)) for mp, cp in _plugin_paths.items()]
+        if plugin_paths:
+            print(
+                f"  Plugins: {len(plugin_paths)} found ({', '.join(mp for mp, _ in plugin_paths)})"
+            )
 
         store = KnowledgeStore(db_path)
         indexer = AssetIndexer(
@@ -1276,35 +1376,39 @@ if __name__ == "__main__":
             content_path,
             embed_fn=embed_fn,
             embed_model=embed_model,
+            force=force_reindex,
+            plugin_paths=plugin_paths if plugin_paths else None,
         )
 
         # Progress tracking with ETA
         import time as time_module
-        batch_state = {'start_time': None, 'phase_start': None, 'last_phase': ''}
 
+        batch_state = {"start_time": None, "phase_start": None, "last_phase": ""}
 
         def batch_progress(status_msg, current, total):
             now = time_module.time()
 
             # Reset phase timer on new phase
-            phase = status_msg.split(':')[0] if ':' in status_msg else status_msg
-            if phase != batch_state['last_phase']:
-                batch_state['phase_start'] = now
-                batch_state['last_phase'] = phase
-            if batch_state['start_time'] is None:
-                batch_state['start_time'] = now
+            phase = status_msg.split(":")[0] if ":" in status_msg else status_msg
+            if phase != batch_state["last_phase"]:
+                batch_state["phase_start"] = now
+                batch_state["last_phase"] = phase
+            if batch_state["start_time"] is None:
+                batch_state["start_time"] = now
 
             if total > 0:
                 pct = int(100 * current / total)
                 eta_str = ""
-                elapsed = now - (batch_state['phase_start'] or now)
+                elapsed = now - (batch_state["phase_start"] or now)
                 if current > 0 and elapsed > 2:
                     rate = current / elapsed
                     remaining = total - current
                     if rate > 0:
                         eta_seconds = remaining / rate
                         eta_str = f" - ETA: {format_eta(eta_seconds)}"
-                sys.stdout.write(f"\r  {status_msg}: [{current}/{total}] {pct}%{eta_str}          ")
+                sys.stdout.write(
+                    f"\r  {status_msg}: [{current}/{total}] {pct}%{eta_str}          "
+                )
             else:
                 sys.stdout.write(f"\r  {status_msg}...          ")
             sys.stdout.flush()
@@ -1314,14 +1418,18 @@ if __name__ == "__main__":
             stats = indexer.index_folder(
                 index_path,
                 type_filter=["WidgetBlueprint", "DataTable", "MaterialInstance"],
-                progress_callback=lambda p, c, t: batch_progress(f"Indexing {p.split('/')[-1][:30]}", c, t)
+                progress_callback=lambda p, c, t: batch_progress(
+                    f"Indexing {p.split('/')[-1][:30]}", c, t
+                ),
             )
         else:
             stats = indexer.index_folder_batch(
                 index_path,
-                batch_size=500,  # Smaller batches for better progress feedback & OneDrive compatibility
+                batch_size=batch_size,
                 progress_callback=batch_progress,
                 profile=profile,
+                max_assets=max_assets,
+                type_filter=type_filter,
             )
 
         # Clear the progress line and show results
@@ -1329,18 +1437,109 @@ if __name__ == "__main__":
         print()
         print("Batch indexing complete:")
         print(f"  Total found: {stats.get('total_found', 0)}")
-        if 'lightweight_indexed' in stats:
+        if "lightweight_indexed" in stats:
             print(f"  Lightweight indexed: {stats.get('lightweight_indexed', 0)}")
             print(f"  Semantic indexed: {stats.get('semantic_indexed', 0)}")
         else:
             print(f"  Indexed: {stats.get('indexed', 0)}")
         print(f"  Unchanged: {stats.get('unchanged', 0)}")
         print(f"  Errors: {stats.get('errors', 0)}")
-        if stats.get('by_type'):
+        if stats.get("by_type"):
             print()
             print("By type:")
-            for asset_type, count in sorted(stats['by_type'].items()):
+            for asset_type, count in sorted(stats["by_type"].items()):
                 print(f"  {asset_type}: {count}")
+        sys.exit(0)
+
+    if arg == "--backfill-embeddings":
+        from pathlib import Path
+
+        db_path = Path(get_project_db_path())
+        if not db_path.exists():
+            print(f"ERROR: No index found at {db_path}")
+            print("Run --index-batch first to create the index.")
+            sys.exit(1)
+
+        batch_size = 100
+        for i, a in enumerate(sys.argv):
+            if a == "--batch-size" and i + 1 < len(sys.argv):
+                try:
+                    batch_size = max(10, min(500, int(sys.argv[i + 1])))
+                except ValueError:
+                    pass
+
+        from knowledge_index import KnowledgeStore, AssetIndexer
+
+        print("Loading sentence-transformers for embedding backfill...")
+        try:
+            from knowledge_index.indexer import create_sentence_transformer_embedder
+
+            embed_fn = create_sentence_transformer_embedder()
+            embed_model = "all-MiniLM-L6-v2"
+        except ImportError:
+            print("ERROR: sentence-transformers not installed")
+            print("Install with: pip install sentence-transformers")
+            sys.exit(1)
+        except Exception as e:
+            print(f"ERROR: Failed to load embedding model: {e}")
+            sys.exit(1)
+
+        if embed_fn is None:
+            print("ERROR: sentence-transformers not installed")
+            print("Install with: pip install sentence-transformers")
+            sys.exit(1)
+
+        # Warm up
+        _ = embed_fn("warmup")
+        print(f"  Model: {embed_model}")
+        print(f"  Database: {db_path}")
+        print(f"  Batch size: {batch_size}")
+        print()
+
+        store = KnowledgeStore(db_path)
+        # Create a minimal indexer just for backfill (no content_path needed)
+        indexer = AssetIndexer.__new__(AssetIndexer)
+        indexer.store = store
+        indexer.embed_fn = embed_fn
+        indexer.embed_model = embed_model
+        indexer.embed_version = "1.0"
+
+        import time as time_module
+
+        backfill_state = {"start_time": None}
+
+        def backfill_progress(status_msg, current, total):
+            now = time_module.time()
+            if backfill_state["start_time"] is None:
+                backfill_state["start_time"] = now
+            if total > 0:
+                pct = int(100 * current / total)
+                eta_str = ""
+                elapsed = now - backfill_state["start_time"]
+                if current > 0 and elapsed > 2:
+                    rate = current / elapsed
+                    remaining = total - current
+                    if rate > 0:
+                        eta_seconds = remaining / rate
+                        eta_str = f" - ETA: {format_eta(eta_seconds)}"
+                sys.stdout.write(
+                    f"\r  {status_msg}: [{current}/{total}] {pct}%{eta_str}          "
+                )
+            else:
+                sys.stdout.write(f"\r  {status_msg}...          ")
+            sys.stdout.flush()
+
+        stats = indexer.backfill_embeddings(
+            batch_size=batch_size,
+            progress_callback=backfill_progress,
+        )
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        print()
+        print("Embedding backfill complete:")
+        print(f"  Total docs without embeddings: {stats['total']}")
+        print(f"  Newly embedded: {stats['embedded']}")
+        if stats.get("errors", 0) > 0:
+            print(f"  Errors: {stats['errors']}")
         sys.exit(0)
 
     if arg == "--index-source":
@@ -1348,7 +1547,9 @@ if __name__ == "__main__":
 
         if not PROJECT:
             print("ERROR: No project configured")
-            print("Make sure config.json is set up or a .uproject file is in the parent directory")
+            print(
+                "Make sure config.json is set up or a .uproject file is in the parent directory"
+            )
             sys.exit(1)
 
         project_root = Path(os.path.dirname(PROJECT))
@@ -1364,7 +1565,8 @@ if __name__ == "__main__":
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         from knowledge_index import KnowledgeStore, SourceIndexer
-        print(f"Indexing C++ source files...")
+
+        print("Indexing C++ source files...")
         print(f"  Project: {project_root}")
         print(f"  Database: {db_path}")
         print()
@@ -1374,14 +1576,14 @@ if __name__ == "__main__":
 
         # Progress tracking with ETA
         import time as time_module
-        spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-        progress_state = {'idx': 0, 'start_time': None}
 
+        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        progress_state = {"idx": 0, "start_time": None}
 
         def progress(path, current, total):
             now = time_module.time()
-            if progress_state['start_time'] is None:
-                progress_state['start_time'] = now
+            if progress_state["start_time"] is None:
+                progress_state["start_time"] = now
 
             # Get file name from path
             file_name = path.split("/")[-1] if "/" in path else path
@@ -1389,7 +1591,7 @@ if __name__ == "__main__":
                 file_name = file_name[:32] + "..."
 
             # Calculate ETA
-            elapsed = now - progress_state['start_time']
+            elapsed = now - progress_state["start_time"]
             eta_str = ""
             if current > 0 and elapsed > 2:
                 rate = current / elapsed
@@ -1398,10 +1600,12 @@ if __name__ == "__main__":
                     eta_seconds = remaining / rate
                     eta_str = f" - ETA: {format_eta(eta_seconds)}"
 
-            spinner = spinner_chars[progress_state['idx'] % len(spinner_chars)]
-            progress_state['idx'] += 1
+            spinner = spinner_chars[progress_state["idx"] % len(spinner_chars)]
+            progress_state["idx"] += 1
             pct = int(100 * current / total) if total > 0 else 0
-            sys.stdout.write(f"\r  {spinner} [{current}/{total}] {pct}%{eta_str} - {file_name:<30}")
+            sys.stdout.write(
+                f"\r  {spinner} [{current}/{total}] {pct}%{eta_str} - {file_name:<30}"
+            )
             sys.stdout.flush()
 
         # Index Source/ folder
@@ -1409,7 +1613,9 @@ if __name__ == "__main__":
             print("Indexing Source/...")
             stats1 = indexer.index_source(progress_callback=progress)
             sys.stdout.write("\r" + " " * 80 + "\r")
-            print(f"  Source/: {stats1.get('indexed', 0)} files indexed, {stats1.get('unchanged', 0)} unchanged")
+            print(
+                f"  Source/: {stats1.get('indexed', 0)} files indexed, {stats1.get('unchanged', 0)} unchanged"
+            )
         else:
             stats1 = {"total": 0, "indexed": 0, "unchanged": 0, "errors": 0}
             print("  Source/ not found, skipping")
@@ -1419,18 +1625,23 @@ if __name__ == "__main__":
             print("Indexing Plugins/...")
             stats2 = indexer.index_plugins(progress_callback=progress)
             sys.stdout.write("\r" + " " * 80 + "\r")
-            print(f"  Plugins/: {stats2.get('indexed', 0)} files indexed, {stats2.get('unchanged', 0)} unchanged")
+            print(
+                f"  Plugins/: {stats2.get('indexed', 0)} files indexed, {stats2.get('unchanged', 0)} unchanged"
+            )
         else:
             stats2 = {"total": 0, "indexed": 0, "unchanged": 0, "errors": 0}
             print("  Plugins/ not found, skipping")
 
         print()
-        total_indexed = stats1.get('indexed', 0) + stats2.get('indexed', 0)
-        total_unchanged = stats1.get('unchanged', 0) + stats2.get('unchanged', 0)
-        total_errors = stats1.get('errors', 0) + stats2.get('errors', 0)
-        print(f"C++ source indexing complete:")
+        total_indexed = stats1.get("indexed", 0) + stats2.get("indexed", 0)
+        total_unchanged = stats1.get("unchanged", 0) + stats2.get("unchanged", 0)
+        total_errors = stats1.get("errors", 0) + stats2.get("errors", 0)
+        total_purged = stats1.get("purged_docs", 0) + stats2.get("purged_docs", 0)
+        print("C++ source indexing complete:")
         print(f"  Total indexed: {total_indexed}")
         print(f"  Total unchanged: {total_unchanged}")
+        if total_purged > 0:
+            print(f"  Purged generated/intermediate docs: {total_purged}")
         if total_errors > 0:
             print(f"  Errors: {total_errors}")
         sys.exit(0)
@@ -1440,7 +1651,9 @@ if __name__ == "__main__":
 
         if not PROJECT:
             print("ERROR: No project configured")
-            print("Make sure config.json is set up or a .uproject file is in the parent directory")
+            print(
+                "Make sure config.json is set up or a .uproject file is in the parent directory"
+            )
             sys.exit(1)
 
         content_path = Path(os.path.dirname(PROJECT)) / "Content"
@@ -1450,7 +1663,8 @@ if __name__ == "__main__":
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         from knowledge_index import KnowledgeStore, AssetIndexer, SourceIndexer
-        print(f"Building full semantic index (assets + source)...")
+
+        print("Building full semantic index (assets + source)...")
         print(f"  Project: {project_root}")
         print(f"  Database: {db_path}")
         print()
@@ -1459,21 +1673,21 @@ if __name__ == "__main__":
 
         # Progress tracking with ETA
         import time as time_module
-        spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-        progress_state = {'idx': 0, 'start_time': None}
 
+        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        progress_state = {"idx": 0, "start_time": None}
 
         def progress(path, current, total):
             now = time_module.time()
-            if progress_state['start_time'] is None:
-                progress_state['start_time'] = now
+            if progress_state["start_time"] is None:
+                progress_state["start_time"] = now
 
             name = path.split("/")[-1] if "/" in path else path
             if len(name) > 35:
                 name = name[:32] + "..."
 
             # Calculate ETA
-            elapsed = now - progress_state['start_time']
+            elapsed = now - progress_state["start_time"]
             eta_str = ""
             if current > 0 and elapsed > 2:
                 rate = current / elapsed
@@ -1482,19 +1696,25 @@ if __name__ == "__main__":
                     eta_seconds = remaining / rate
                     eta_str = f" - ETA: {format_eta(eta_seconds)}"
 
-            spinner = spinner_chars[progress_state['idx'] % len(spinner_chars)]
-            progress_state['idx'] += 1
+            spinner = spinner_chars[progress_state["idx"] % len(spinner_chars)]
+            progress_state["idx"] += 1
             pct = int(100 * current / total) if total > 0 else 0
-            sys.stdout.write(f"\r  {spinner} [{current}/{total}] {pct}%{eta_str} - {name:<30}")
+            sys.stdout.write(
+                f"\r  {spinner} [{current}/{total}] {pct}%{eta_str} - {name:<30}"
+            )
             sys.stdout.flush()
 
         # Index assets
         if content_path.exists():
             print("Indexing assets...")
             asset_indexer = AssetIndexer(store, content_path)
-            asset_stats = asset_indexer.index_folder("/Game", progress_callback=progress)
+            asset_stats = asset_indexer.index_folder(
+                "/Game", progress_callback=progress
+            )
             sys.stdout.write("\r" + " " * 80 + "\r")
-            print(f"  Assets: {asset_stats.get('indexed', 0)} indexed, {asset_stats.get('unchanged', 0)} unchanged")
+            print(
+                f"  Assets: {asset_stats.get('indexed', 0)} indexed, {asset_stats.get('unchanged', 0)} unchanged"
+            )
         else:
             print("  Content/ not found, skipping assets")
 
@@ -1506,7 +1726,13 @@ if __name__ == "__main__":
             source_indexer = SourceIndexer(store, PROJECT)
             source_stats = source_indexer.index_all(progress_callback=progress)
             sys.stdout.write("\r" + " " * 80 + "\r")
-            print(f"  Source: {source_stats.get('indexed', 0)} indexed, {source_stats.get('unchanged', 0)} unchanged")
+            print(
+                f"  Source: {source_stats.get('indexed', 0)} indexed, {source_stats.get('unchanged', 0)} unchanged"
+            )
+            if source_stats.get("purged_docs", 0) > 0:
+                print(
+                    f"  Source purge: {source_stats.get('purged_docs', 0)} generated/intermediate docs removed"
+                )
         else:
             print("  Source/Plugins not found, skipping C++ source")
 
