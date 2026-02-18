@@ -1363,7 +1363,7 @@ void ExtractBlueprint(UAsset asset)
 
     // Events and Functions - separate them
     var events = new List<string>();
-    var functions = new List<(string name, string flags, List<string> calls)>();
+    var functions = new List<(string name, string flags, List<string> calls, List<(string name, string type, string direction)> parameters)>();
 
     foreach (var funcExport in asset.Exports.OfType<FunctionExport>())
     {
@@ -1421,13 +1421,53 @@ void ExtractBlueprint(UAsset asset)
                 .ToList();
         }
 
+        // Extract function parameters from LoadedProperties
+        var parameters = new List<(string name, string type, string direction)>();
+        if (funcExport.LoadedProperties != null && funcExport.LoadedProperties.Length > 0)
+        {
+            foreach (var prop in funcExport.LoadedProperties)
+            {
+                if (!prop.PropertyFlags.HasFlag(EPropertyFlags.CPF_Parm)) continue;
+
+                var paramName = prop.Name?.ToString() ?? "Unknown";
+                var paramType = prop.SerializedType?.ToString() ?? "Unknown";
+                paramType = paramType.Replace("Property", "");
+
+                string direction;
+                if (prop.PropertyFlags.HasFlag(EPropertyFlags.CPF_ReturnParm))
+                    direction = "return";
+                else if (prop.PropertyFlags.HasFlag(EPropertyFlags.CPF_OutParm)
+                         && !prop.PropertyFlags.HasFlag(EPropertyFlags.CPF_ReferenceParm))
+                    direction = "out";
+                else
+                    direction = "in";
+
+                parameters.Add((paramName, paramType, direction));
+            }
+        }
+        else
+        {
+            // Fallback: find property exports whose OuterIndex points to this function
+            var funcIndex = Array.IndexOf(asset.Exports.ToArray(), funcExport) + 1;
+            foreach (var export in asset.Exports)
+            {
+                var className = export.GetExportClassType()?.ToString() ?? "";
+                if (!className.EndsWith("Property")) continue;
+                if (export.OuterIndex.Index != funcIndex) continue;
+
+                var paramName = export.ObjectName.ToString();
+                var paramType = className.Replace("Property", "");
+                parameters.Add((paramName, paramType, "in"));
+            }
+        }
+
         if (isEvent)
         {
             events.Add(funcName);
         }
         else
         {
-            functions.Add((funcName, string.Join(",", simpleFlags), funcCalls));
+            functions.Add((funcName, string.Join(",", simpleFlags), funcCalls, parameters));
         }
     }
 
@@ -1444,19 +1484,30 @@ void ExtractBlueprint(UAsset asset)
     if (functions.Count > 0)
     {
         xml.AppendLine("  <functions>");
-        foreach (var (name, flags, calls) in functions.Take(25))
+        foreach (var (name, flags, calls, parameters) in functions.Take(25))
         {
-            if (calls.Count > 0)
+            bool hasContent = calls.Count > 0 || parameters.Count > 0;
+            if (hasContent)
             {
-                // Multi-line format with calls
                 var flagsAttr = !string.IsNullOrEmpty(flags) ? $" flags=\"{EscapeXml(flags)}\"" : "";
                 xml.AppendLine($"    <function name=\"{EscapeXml(name)}\"{flagsAttr}>");
-                xml.AppendLine($"      <calls>{EscapeXml(string.Join(", ", calls))}</calls>");
+
+                if (parameters.Count > 0)
+                {
+                    xml.AppendLine("      <params>");
+                    foreach (var (pName, pType, pDir) in parameters)
+                        xml.AppendLine($"        <param name=\"{EscapeXml(pName)}\" type=\"{EscapeXml(pType)}\" direction=\"{pDir}\"/>");
+                    xml.AppendLine("      </params>");
+                }
+
+                if (calls.Count > 0)
+                    xml.AppendLine($"      <calls>{EscapeXml(string.Join(", ", calls))}</calls>");
+
                 xml.AppendLine("    </function>");
             }
             else
             {
-                // Single-line format for functions with no calls
+                // Single-line format for simple functions
                 if (!string.IsNullOrEmpty(flags))
                     xml.AppendLine($"    <function flags=\"{EscapeXml(flags)}\">{EscapeXml(name)}</function>");
                 else
