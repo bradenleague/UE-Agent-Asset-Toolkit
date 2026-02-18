@@ -752,7 +752,10 @@ def list_asset_folders(path: str = "/Game") -> str:
 
 
 def inspect_asset(
-    asset_path: str, summarize: bool = False, type_only: bool = False
+    asset_path: str,
+    summarize: bool = False,
+    type_only: bool = False,
+    detail: Optional[str] = None,
 ) -> str:
     """Get all properties and values of an asset.
 
@@ -765,12 +768,21 @@ def inspect_asset(
                    Recommended for materials, blueprints, datatables, and widgets.
         type_only: If True, returns just asset type and metadata (fast, no content parsing).
                    Use this when you just need to identify what kind of asset it is.
+        detail: For Blueprints, request deeper analysis:
+                "graph" = K2Node visual graph (pin connections, data flow between nodes)
+                "bytecode" = control flow graph with pseudocode (branches, loops, execution logic)
     """
     file_path = _asset_path_to_file(asset_path)
 
     # Fast path: just return type/metadata
     if type_only:
         return _run_asset_parser("summary", file_path)
+
+    # Deep Blueprint analysis modes
+    if detail == "graph":
+        return _run_asset_parser("graph", file_path)
+    elif detail == "bytecode":
+        return _run_asset_parser("bytecode", file_path)
 
     if not summarize:
         return _run_asset_parser("inspect", file_path)
@@ -1049,12 +1061,13 @@ TOOLS = [
     },
     {
         "name": "inspect_asset",
-        "description": "Get all properties and values of an asset. Use summarize=True for focused output, type_only=True for just asset type/metadata.",
+        "description": "Get all properties and values of an asset. Use summarize=True for focused output, type_only=True for just asset type/metadata. For Blueprints, use detail='graph' for visual node wiring or detail='bytecode' for control flow pseudocode.",
         "function": inspect_asset,
         "parameters": {
             "asset_path": {"type": "string"},
             "summarize": {"type": "boolean", "default": False, "optional": True},
             "type_only": {"type": "boolean", "default": False, "optional": True},
+            "detail": {"type": "string", "optional": True, "enum": ["graph", "bytecode"]},
         },
     },
     {
@@ -1077,13 +1090,13 @@ TOOLS = [
     },
     {
         "name": "inspect_blueprint_graph",
-        "description": "Get Blueprint visual graph: nodes, pins, connections, and data flow between them.",
+        "description": "Internal. Get Blueprint visual graph. Prefer inspect_asset(detail='graph').",
         "function": inspect_blueprint_graph,
         "parameters": {"asset_path": {"type": "string"}},
     },
     {
         "name": "inspect_blueprint_bytecode",
-        "description": "Get Blueprint bytecode as control flow graph with pseudocode. Shows basic blocks, branches, loops, function calls, variable assignments, and control flow edges per function.",
+        "description": "Internal. Get Blueprint bytecode CFG. Prefer inspect_asset(detail='bytecode').",
         "function": inspect_blueprint_bytecode,
         "parameters": {"asset_path": {"type": "string"}},
     },
