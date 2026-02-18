@@ -1,0 +1,33 @@
+{
+  "profile_name": "_defaults",
+  "export_class_reclassify": {
+    "GameFeatureData": "GameFeatureData",
+    "DataAsset": "DataAsset",
+    "PrimaryDataAsset": "DataAsset",
+    "PrimaryAssetLabel": "DataAsset",
+    "GameSettingVisualData": "DataAsset"
+  },
+  "name_prefixes": {},
+  "semantic_types": [],
+  "game_feature_types": ["GameFeatureData"],
+  "blueprint_parent_redirects": {},
+  "data_asset_extractors": [],
+  "deep_ref_export_classes": [
+    "GameFeatureData",
+    "DataRegistrySource_DataTable",
+    "DataRegistry"
+  ],
+  "deep_ref_candidates": [],
+  "widget_rank_terms": [
+    "HUD",
+    "Widget",
+    "UIExtension",
+    "AddWidget",
+    "ExtensionPoint"
+  ],
+  "widget_fallback_patterns": [
+    "%GameFeatureAction_AddWidget%",
+    "%UIExtensionPointWidget%",
+    "%PrimaryGameLayout%"
+  ]
+}

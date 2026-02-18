@@ -1,9 +1,16 @@
 {
+  "_comment_paths": [
+    "Windows:  D:\\Path\\To\\YourProject\\YourProject.uproject",
+    "macOS:    /Users/you/Projects/YourProject/YourProject.uproject",
+    "Linux:    /home/you/Projects/YourProject/YourProject.uproject"
+  ],
   "active_project": "myproject",
   "projects": {
     "myproject": {
       "project_path": "D:\\Path\\To\\YourProject\\YourProject.uproject",
-      "engine_path": "D:\\Path\\To\\UE_5.x\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe"
+      "engine_path": "D:\\Path\\To\\UE_5.x\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe",
+      "_comment_engine": "macOS/Linux: engine_path is optional — the parser runs standalone",
+      "profile": null
     }
   },
   "tools": {
