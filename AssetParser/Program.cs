@@ -7,6 +7,7 @@ using UAssetAPI.Kismet.Bytecode.Expressions;
 using UAssetAPI.PropertyTypes.Objects;
 using UAssetAPI.PropertyTypes.Structs;
 using UAssetAPI.UnrealTypes;
+using UAssetAPI.CustomVersions;
 
 // Asset parser CLI for extracting data from Unreal Engine .uasset files
 // Usage: AssetParser.exe <command> <asset_path> [options]
@@ -1805,7 +1806,7 @@ ParsedPin ReadOnePin(BinaryReader r, UAsset asset, IReadOnlyList<FString> nameMa
         ReadFText(r); // WITH_EDITOR only — omitted in cooked builds
 
         lastField = "SourceIndex";
-        r.ReadInt32(); // Conditional in source (only when >=0), but always present in editor assets tested so far
+        r.ReadInt32();
 
         lastField = "PinToolTip";
         ReadFString(r);
@@ -1850,10 +1851,11 @@ ParsedPin ReadOnePin(BinaryReader r, UAsset asset, IReadOnlyList<FString> nameMa
         lastField = "PinType.bIsUObjectWrapper";
         r.ReadUInt32();
 
-        // UE 5.4-5.7+: bSerializeAsSinglePrecisionFloat (WITH_EDITOR + version-gated)
-        // Source: EdGraphPin.cpp lines 327-343, gated by
+        // UE 5.4+: bSerializeAsSinglePrecisionFloat (WITH_EDITOR + custom-version-gated)
+        // Source: EdGraphPin.cpp, gated by
         // FUE5ReleaseStreamObjectVersion::SerializeFloatPinDefaultValuesAsSinglePrecision
-        if (asset.GetEngineVersion() >= EngineVersion.VER_UE5_4)
+        if (asset.GetCustomVersion<FUE5ReleaseStreamObjectVersion>()
+            >= FUE5ReleaseStreamObjectVersion.SerializeFloatPinDefaultValuesAsSinglePrecision)
         {
             lastField = "PinType.bSerializeAsSinglePrecisionFloat";
             r.ReadUInt32();

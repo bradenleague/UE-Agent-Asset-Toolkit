@@ -1581,6 +1581,7 @@ def _select_fuzzy_match(results: list[dict], query: str) -> dict | None:
 def inspect_asset(
     path_or_query: str,
     fuzzy: bool = False,
+    detail: str | None = None,
 ) -> dict:
     """
     Get detailed structured data about a specific asset.
@@ -1588,6 +1589,7 @@ def inspect_asset(
     Args:
         path_or_query: Asset path (/Game/..., /PluginName/...) or search query if fuzzy=True
         fuzzy: If True, search for the asset first, then inspect top match
+        detail: For Blueprints: 'graph' (visual node wiring) or 'bytecode' (control flow pseudocode)
 
     Returns:
         Type-specific structured data about the asset
@@ -1623,7 +1625,7 @@ def inspect_asset(
 
     # Call the raw inspect function
     try:
-        raw_result = _raw_inspect(asset_path, summarize=True, type_only=False)
+        raw_result = _raw_inspect(asset_path, summarize=True, type_only=False, detail=detail)
 
         # Parse the result (it returns a string)
         if isinstance(raw_result, str):
@@ -1722,6 +1724,8 @@ Returns type-specific structured data:
   - Material: parameters (scalar, vector, texture), domain, blend mode
   - DataTable: row structure, columns, sample data
 
+For Blueprints, use detail='graph' for visual node wiring or detail='bytecode' for control flow pseudocode.
+
 Use unreal_search first to find assets, then inspect_asset for details.""",
             inputSchema={
                 "type": "object",
@@ -1734,6 +1738,11 @@ Use unreal_search first to find assets, then inspect_asset for details.""",
                         "type": "boolean",
                         "description": "If true, search for the asset first then inspect top match",
                         "default": False,
+                    },
+                    "detail": {
+                        "type": "string",
+                        "enum": ["graph", "bytecode"],
+                        "description": "For Blueprints: 'graph' (K2Node visual wiring) or 'bytecode' (control flow pseudocode)",
                     },
                 },
                 "required": ["path_or_query"],
@@ -1757,6 +1766,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = inspect_asset(
                 path_or_query=arguments.get("path_or_query", ""),
                 fuzzy=arguments.get("fuzzy", False),
+                detail=arguments.get("detail"),
             )
         else:
             result = {"error": f"Unknown tool: {name}"}
