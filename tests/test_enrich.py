@@ -135,7 +135,7 @@ class TestEnrichUnit:
             {"path": "/Game/Textures/T_Missing", "name": "T_Missing", "snippet": ""}
         ]
         level = _enrich_results_with_full_docs(results, store)
-        assert level == "full"  # function still returns "full" — it ran
+        assert level == "summary"
         assert "content" not in results[0]
         assert "metadata" not in results[0]
 
@@ -168,6 +168,49 @@ class TestEnrichUnit:
         assert level == "full"
         assert "Healthbar content" in results[0]["content"]
         assert "Ammo counter content" in results[1]["content"]
+
+    def test_enrich_skips_results_without_path(self):
+        """Mixed result rows should not crash when one row has no path."""
+        store = _make_mock_store(
+            [
+                ("/Game/UI/W_Healthbar", "Healthbar content", "{}", "asset_summary"),
+            ]
+        )
+        results = [
+            {"path": "/Game/UI/W_Healthbar", "name": "W_Healthbar", "snippet": "..."},
+            {"name": "orphan_result", "snippet": "no path present"},
+        ]
+        level = _enrich_results_with_full_docs(results, store)
+        assert level == "full"
+        assert "Healthbar content" in results[0]["content"]
+        assert "content" not in results[1]
+        assert "metadata" not in results[1]
+
+    def test_enrich_ignores_malformed_metadata(self):
+        """Invalid JSON metadata should be ignored, not crash enrichment."""
+        store = _make_mock_store(
+            [
+                (
+                    "/Game/UI/W_Healthbar",
+                    "Healthbar content",
+                    '{"parent_class":"UserWidget"}',
+                    "asset_summary",
+                ),
+                (
+                    "/Game/UI/W_Healthbar",
+                    "Widget tree content",
+                    "{bad json",
+                    "umg_widget_tree",
+                ),
+            ]
+        )
+        results = [
+            {"path": "/Game/UI/W_Healthbar", "name": "W_Healthbar", "snippet": "..."},
+        ]
+        level = _enrich_results_with_full_docs(results, store)
+        assert level == "full"
+        assert "Healthbar content" in results[0]["content"]
+        assert results[0]["metadata"]["parent_class"] == "UserWidget"
 
 
 # ---------------------------------------------------------------------------

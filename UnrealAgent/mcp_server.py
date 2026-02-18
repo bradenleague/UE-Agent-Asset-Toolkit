@@ -389,10 +389,11 @@ def _enrich_results_with_full_docs(results: list[dict], store) -> str:
 
     conn = store._get_connection()
     try:
-        placeholders = ",".join("?" * len(paths))
+        unique_paths = list(dict.fromkeys(paths))
+        placeholders = ",".join("?" * len(unique_paths))
         rows = conn.execute(
             f"SELECT path, text, metadata, type FROM docs WHERE path IN ({placeholders}) ORDER BY path, type",
-            tuple(paths),
+            tuple(unique_paths),
         ).fetchall()
 
         # Group by path
@@ -400,25 +401,44 @@ def _enrich_results_with_full_docs(results: list[dict], store) -> str:
         for row in rows:
             docs_by_path.setdefault(row["path"], []).append(row)
 
+        enriched_any = False
         for r in results:
-            path_docs = docs_by_path.get(r["path"], [])
+            path = r.get("path")
+            if not path:
+                continue
+
+            path_docs = docs_by_path.get(path, [])
             if not path_docs:
                 continue
+
             # Merge text from all docs for this path
             texts = [row["text"] for row in path_docs if row["text"]]
             if texts:
                 r["content"] = "\n\n".join(texts)
+
             # Merge metadata
             merged_meta = {}
             for row in path_docs:
-                meta = json.loads(row["metadata"]) if row["metadata"] else {}
-                merged_meta.update(meta)
+                if not row["metadata"]:
+                    continue
+                try:
+                    meta = json.loads(row["metadata"])
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(
+                        "Skipping malformed docs metadata for path '%s'", path
+                    )
+                    continue
+                if isinstance(meta, dict):
+                    merged_meta.update(meta)
+
             if merged_meta:
                 r["metadata"] = merged_meta
+            if texts or merged_meta:
+                enriched_any = True
     finally:
         conn.close()
 
-    return "full"
+    return "full" if enriched_any else "summary"
 
 
 def _should_try_tag_search(query: str) -> bool:
