@@ -1494,6 +1494,16 @@ class AssetIndexer:
                 else []
             )
 
+            params = []
+            params_elem = func_elem.find("params")
+            if params_elem is not None:
+                for p in params_elem.findall("param"):
+                    params.append({
+                        "name": p.get("name", ""),
+                        "type": p.get("type", ""),
+                        "direction": p.get("direction", "in"),
+                    })
+
             chunks.append(
                 BlueprintGraphDoc(
                     path=game_path,
@@ -1503,6 +1513,7 @@ class AssetIndexer:
                     calls=calls,
                     variables=variables,
                     references_out=refs,
+                    parameters=params,
                 )
             )
 
@@ -3136,6 +3147,7 @@ class AssetIndexer:
                 )
                 calls = func_data.get("calls") or []
                 control_flow = func_data.get("control_flow") or {}
+                params = func_data.get("params") or []
 
                 if func_name:
                     chunks.append(
@@ -3148,6 +3160,7 @@ class AssetIndexer:
                             variables=variables,
                             references_out=refs,
                             control_flow=control_flow,
+                            parameters=params,
                         )
                     )
 

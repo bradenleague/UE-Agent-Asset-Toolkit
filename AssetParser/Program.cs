@@ -3543,8 +3543,33 @@ void BatchBlueprint(List<string> paths, EngineVersion engineVersion)
                         controlFlow = AnalyzeControlFlow(funcExport.ScriptBytecode);
                     }
 
+                    // Extract parameters (same logic as ExtractBlueprint)
+                    var parameters = new List<object>();
+                    if (funcExport.LoadedProperties != null && funcExport.LoadedProperties.Length > 0)
+                    {
+                        foreach (var prop in funcExport.LoadedProperties)
+                        {
+                            if (!prop.PropertyFlags.HasFlag(EPropertyFlags.CPF_Parm)) continue;
+                            var paramName = prop.Name?.ToString() ?? "Unknown";
+                            var paramType = (prop.SerializedType?.ToString() ?? "Unknown").Replace("Property", "");
+                            string direction = prop.PropertyFlags.HasFlag(EPropertyFlags.CPF_ReturnParm) ? "return"
+                                : (prop.PropertyFlags.HasFlag(EPropertyFlags.CPF_OutParm) && !prop.PropertyFlags.HasFlag(EPropertyFlags.CPF_ReferenceParm)) ? "out" : "in";
+                            parameters.Add(new { name = paramName, type = paramType, direction });
+                        }
+                    }
+                    else
+                    {
+                        var funcIndex = Array.IndexOf(asset.Exports.ToArray(), funcExport) + 1;
+                        foreach (var export in asset.Exports)
+                        {
+                            var cn = export.GetExportClassType()?.ToString() ?? "";
+                            if (!cn.EndsWith("Property") || export.OuterIndex.Index != funcIndex) continue;
+                            parameters.Add(new { name = export.ObjectName.ToString(), type = cn.Replace("Property", ""), direction = "in" });
+                        }
+                    }
+
                     if (functions.Count < 25)
-                        functions.Add(new { name = funcName, flags = string.Join(",", simpleFlags), calls = funcCalls, control_flow = controlFlow });
+                        functions.Add(new { name = funcName, flags = string.Join(",", simpleFlags), calls = funcCalls, control_flow = controlFlow, @params = parameters.Count > 0 ? parameters : null });
                 }
             }
 

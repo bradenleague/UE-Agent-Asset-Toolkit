@@ -489,7 +489,7 @@ def cmd_index(args):
     errors = stats.get('errors', 0)
 
     print()
-    print(f"[{timestamp()}] ✓ Complete in {total_duration}")
+    print(f"[{timestamp()}] Complete in {total_duration}")
     print(f"    {total_found:,} assets: {semantic:,} semantic, {lightweight:,} lightweight, {unchanged:,} unchanged, {errors} errors")
 
     # Rebuild FTS5 index when marked dirty by docs writes.

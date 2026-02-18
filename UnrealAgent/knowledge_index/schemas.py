@@ -275,9 +275,11 @@ class BlueprintGraphDoc(DocChunk):
         module: str = None,
         is_event: bool = False,
         control_flow: dict = None,
+        parameters: list[dict] = None,
     ):
         references_out = references_out or []
         control_flow = control_flow or {}
+        parameters = parameters or []
 
         func_type = "Event" if is_event else "Function"
 
@@ -286,6 +288,14 @@ class BlueprintGraphDoc(DocChunk):
 
         if flags:
             text_parts.append(f"Flags: {', '.join(flags)}")
+
+        if parameters:
+            dir_prefix = {"in": "", "out": "out ", "return": "returns "}
+            param_strs = [
+                f"{dir_prefix.get(p.get('direction', 'in'), '')}{p.get('name', '')}: {p.get('type', '')}"
+                for p in parameters
+            ]
+            text_parts.append(f"Parameters: {', '.join(param_strs)}")
 
         if calls:
             text_parts.append(f"Calls: {', '.join(calls[:10])}")
@@ -306,6 +316,7 @@ class BlueprintGraphDoc(DocChunk):
             "variables": variables,
             "is_event": is_event,
             "control_flow": control_flow,
+            "parameters": parameters,
         }
 
         super().__init__(
