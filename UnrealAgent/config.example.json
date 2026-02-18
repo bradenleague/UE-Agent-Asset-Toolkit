@@ -1,0 +1,13 @@
+{
+  "active_project": "myproject",
+  "projects": {
+    "myproject": {
+      "project_path": "D:\\Path\\To\\YourProject\\YourProject.uproject",
+      "engine_path": "D:\\Path\\To\\UE_5.x\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe"
+    }
+  },
+  "tools": {
+    "timeout_seconds": 120,
+    "default_asset_path": "/Game"
+  }
+}

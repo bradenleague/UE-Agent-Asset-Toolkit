@@ -1,0 +1,57 @@
+# Build outputs
+AssetParser/bin/
+AssetParser/obj/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+.eggs/
+
+# User-specific config (use config.example.json as template)
+UnrealAgent/config.json
+UnrealAgent/local_config.json
+
+# Semantic Index (auto-generated per project)
+*.db
+*.sqlite
+UnrealAgent/data/
+knowledge_index.db
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.sln.docstates
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Windows reserved names (created accidentally)
+nul
+
+# Claude Code local settings (machine-specific paths)
+.claude/settings.local.json
+
+# Project-specific Claude instructions (use README.md for shared docs)
+CLAUDE.md
+
+# Python virtual environment
+UnrealAgent/.venv/

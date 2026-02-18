@@ -1,0 +1,8 @@
+# Unreal Engine Asset Tools - MCP Server Dependencies
+
+# MCP Server (required)
+mcp>=1.0.0
+
+# Embeddings for semantic search (optional but recommended)
+sentence-transformers>=2.0.0
+numpy>=1.20.0
