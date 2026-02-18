@@ -43,16 +43,18 @@ pip install -r UnrealAgent/requirements.txt
 git clone --recursive https://github.com/bradenleague/UE-Agent-Asset-Toolkit
 cd UE-Agent-Asset-Toolkit
 
-# 2. Create a virtual environment and install dependencies
+# 2. Create a virtual environment
 python -m venv .venv
 source .venv/bin/activate        # macOS/Linux
 # .venv\Scripts\activate         # Windows
 
-# 3. Run setup — builds the parser, installs Python deps, and configures your project
-python setup.py /path/to/Project.uproject
+# 3. Run setup — builds the parser, installs Python deps, configures your project
+python setup.py /path/to/YourProject.uproject
 
 # 4. Build the search index
 python index.py --all --plugins
+
+# 5. Connect to your MCP client (see below)
 ```
 
 `setup.py` handles building the C# parser (UAssetAPI + AssetParser), installing Python packages, and registering your `.uproject`. Add `--index` to combine steps 3 and 4.
@@ -63,6 +65,49 @@ cd YourProject
 git clone --recursive https://github.com/bradenleague/UE-Agent-Asset-Toolkit Tools
 cd Tools && python setup.py ../YourProject.uproject --index
 ```
+
+## MCP Client Setup
+
+The toolkit runs as an MCP server. After building and indexing, connect it to your AI tool:
+
+### Claude Code
+
+Create a `.mcp.json` file in your working directory (or any parent directory):
+
+```json
+{
+  "mcpServers": {
+    "unreal": {
+      "command": "/path/to/UE-Agent-Asset-Toolkit/.venv/bin/python",
+      "args": ["/path/to/UE-Agent-Asset-Toolkit/UnrealAgent/mcp_server.py"]
+    }
+  }
+}
+```
+
+Use absolute paths. Restart Claude Code after adding the config.
+
+### Claude Desktop
+
+Add to your Claude Desktop config:
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "unreal": {
+      "command": "python",
+      "args": ["/path/to/UE-Agent-Asset-Toolkit/UnrealAgent/mcp_server.py"]
+    }
+  }
+}
+```
+
+### Other MCP Clients
+
+Any MCP-compatible client can connect — just point it at `UnrealAgent/mcp_server.py` via stdio transport.
 
 ## MCP Tools
 

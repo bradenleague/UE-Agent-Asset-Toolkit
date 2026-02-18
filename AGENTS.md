@@ -4,7 +4,18 @@ You are working in the **UE Asset Toolkit** — an MCP server and indexer that h
 
 ## Setup (Interactive)
 
-If the user asks for help setting up, follow this flow:
+If the user asks for help setting up, follow this flow. **The most important thing is to understand the user's situation before running any commands.** Do not assume anything about their Unreal projects, engine versions, or goals.
+
+### 0. Understand What the User Needs
+
+**Before touching anything**, have a conversation. Ask:
+
+1. **What Unreal project(s) are you working on?** — Get the project name, what it is (game, prototype, sample project, etc.), and where it lives. Don't assume you know — the project may be on this machine, on a remote machine, on an external drive, or not cloned yet.
+2. **What UE version?** — The toolkit works best with UE 5.0–5.4. UE 5.5+ has known parsing gaps. This affects expectations.
+3. **What do you want to use this for?** — Understanding Blueprints? Searching for assets? Debugging a specific system? Onboarding onto an unfamiliar codebase? This shapes whether they need a full index, a quick index, source indexing, etc.
+4. **Is the Editor available?** — The toolkit works *without* the Editor, but knowing whether they have it open or installed helps set context.
+
+Do NOT skip this step. Do NOT silently search for `.uproject` files and assume that whatever you find is what the user wants. Ask them.
 
 ### 1. Check Prerequisites
 
@@ -13,19 +24,32 @@ dotnet --version    # Needs .NET 8+
 python3 --version   # Needs 3.10+
 ```
 
-If either is missing, help install them first. On Windows, .NET is typically installed via the SDK installer. Python via python.org or winget.
+If either is missing, help install them first:
+- **Windows**: .NET SDK from the [official installer](https://dotnet.microsoft.com/download/dotnet/8.0). Python via python.org or winget.
+- **macOS**: `brew install dotnet-sdk` and `brew install python` (or pyenv).
+- **Linux**: Package manager or [official .NET instructions](https://learn.microsoft.com/dotnet/core/install/linux).
 
-### 2. Build the Toolkit
+### 2. Clone and Build
 
 ```bash
-python setup.py
+git clone --recursive https://github.com/bradenleague/UE-Agent-Asset-Toolkit
+cd UE-Agent-Asset-Toolkit
+python -m venv .venv
+source .venv/bin/activate  # macOS/Linux
+# .venv\Scripts\activate   # Windows
 ```
 
-This builds UAssetAPI and AssetParser for the current platform. Cross-platform — works on Windows, macOS, and Linux.
+Then run setup **with the user's project path** (from step 0):
 
-### 3. Find the UE Project
+```bash
+python setup.py /path/to/Project.uproject
+```
 
-Ask the user where their Unreal project is. If they don't know, search common locations:
+This builds UAssetAPI and AssetParser, installs Python deps, and registers the project. If the user hasn't given you a project path yet, **ask for it** — don't run `setup.py` without one unless the user explicitly just wants to build the parser.
+
+### 3. Find the UE Project (only if the user doesn't know the path)
+
+If the user says "I have a project but I'm not sure where it is", then search. Otherwise skip this — you should already have the path from step 0.
 
 **Windows:**
 ```powershell
@@ -42,31 +66,61 @@ find ~/Documents ~/Projects ~/Dev /Users/Shared/Epic\ Games -name "*.uproject" -
 find ~/dev ~/projects ~/Documents -name "*.uproject" -maxdepth 4 2>/dev/null
 ```
 
-Present the results and let the user pick, or accept a path directly.
+Present the results and let the user pick.
 
-### 4. Add the Project
-
-```bash
-python index.py add "/path/to/MyGame/MyGame.uproject"
-```
-
-This registers the project in `UnrealAgent/config.json` and sets it as active.
-
-### 5. Run Initial Index
+### 4. Run Initial Index
 
 ```bash
 python index.py --all --plugins
 ```
 
-This indexes all assets with engine defaults. It takes a few minutes depending on project size. The `--plugins` flag includes Game Feature plugin content.
+This indexes all assets with engine defaults. The `--plugins` flag includes Game Feature plugin content. For large projects this takes a few minutes.
 
-### 6. Check Results
+If the user only cares about a specific area (e.g., "I'm working on the UI system"), consider a targeted index instead:
+
+```bash
+python index.py --all --path UI --plugins
+```
+
+### 5. Check Results
 
 ```bash
 python index.py --status
 ```
 
 Report the stats to the user: how many assets found, how many semantic docs, how many lightweight.
+
+### 6. Set Up the MCP Client
+
+The toolkit is only useful once it's connected to the user's AI tool. Ask which client they use and help configure it:
+
+**Claude Code** — create `.mcp.json` in the working directory (or a parent directory):
+```json
+{
+  "mcpServers": {
+    "unreal": {
+      "command": "/absolute/path/to/.venv/bin/python",
+      "args": ["/absolute/path/to/UnrealAgent/mcp_server.py"]
+    }
+  }
+}
+```
+The user needs to restart Claude Code for the MCP server to load.
+
+**Claude Desktop** — add to the app config:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "unreal": {
+      "command": "python",
+      "args": ["/absolute/path/to/UnrealAgent/mcp_server.py"]
+    }
+  }
+}
+```
 
 ### 7. Generate a Profile (Optional but Recommended)
 
