@@ -25,7 +25,7 @@ AssetParser.exe <command> <asset_path> [--version UE5_7]
 | `inspect` | Dump all exports and properties |
 | `widgets` | Extract widget tree from Widget Blueprints |
 | `datatable` | Extract rows from DataTable assets |
-| `blueprint` | Extract functions with bytecode analysis |
+| `blueprint` | Extract functions, variables, and class hierarchy |
 | `material` | Extract Material/MaterialInstance parameters |
 
 ## Examples

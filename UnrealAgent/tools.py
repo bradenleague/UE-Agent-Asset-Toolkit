@@ -770,7 +770,6 @@ def inspect_asset(
                    Use this when you just need to identify what kind of asset it is.
         detail: For Blueprints, request deeper analysis:
                 "graph" = K2Node visual graph (pin connections, data flow between nodes)
-                "bytecode" = control flow graph with pseudocode (branches, loops, execution logic)
     """
     file_path = _asset_path_to_file(asset_path)
 
@@ -780,10 +779,7 @@ def inspect_asset(
 
     # Deep Blueprint analysis modes
     if detail == "graph":
-        return _run_asset_parser("graph", file_path)
-    elif detail == "bytecode":
-        return _run_asset_parser("bytecode", file_path)
-
+        return _run_asset_parser("graph-json", file_path)
     if not summarize:
         return _run_asset_parser("inspect", file_path)
 
@@ -972,7 +968,7 @@ def inspect_datatable(asset_path: str) -> str:
 def inspect_blueprint(asset_path: str) -> str:
     """Get detailed Blueprint information including functions, variables, and class hierarchy.
 
-    Returns all functions with their flags and bytecode info, class properties,
+    Returns all functions with their flags and call analysis, class properties,
     parent class chain, and interfaces. Use this for Blueprint and WidgetBlueprint assets.
     """
     file_path = _asset_path_to_file(asset_path)
@@ -987,18 +983,7 @@ def inspect_blueprint_graph(asset_path: str) -> str:
     Use this to understand how a Blueprint's logic is wired together.
     """
     file_path = _asset_path_to_file(asset_path)
-    return _run_asset_parser("graph", file_path)
-
-
-def inspect_blueprint_bytecode(asset_path: str) -> str:
-    """Get Blueprint bytecode as control flow graph with pseudocode.
-
-    Returns per-function control flow graphs with basic blocks, edges,
-    branch conditions, loop detection, and pseudocode for each instruction.
-    Use this to understand the precise execution logic of a Blueprint.
-    """
-    file_path = _asset_path_to_file(asset_path)
-    return _run_asset_parser("bytecode", file_path)
+    return _run_asset_parser("graph-json", file_path)
 
 
 def inspect_material(asset_path: str) -> str:
@@ -1061,13 +1046,13 @@ TOOLS = [
     },
     {
         "name": "inspect_asset",
-        "description": "Get all properties and values of an asset. Use summarize=True for focused output, type_only=True for just asset type/metadata. For Blueprints, use detail='graph' for visual node wiring or detail='bytecode' for control flow pseudocode.",
+        "description": "Get all properties and values of an asset. Use summarize=True for focused output, type_only=True for just asset type/metadata. For Blueprints, use detail='graph' for visual node wiring.",
         "function": inspect_asset,
         "parameters": {
             "asset_path": {"type": "string"},
             "summarize": {"type": "boolean", "default": False, "optional": True},
             "type_only": {"type": "boolean", "default": False, "optional": True},
-            "detail": {"type": "string", "optional": True, "enum": ["graph", "bytecode"]},
+            "detail": {"type": "string", "optional": True, "enum": ["graph"]},
         },
     },
     {
@@ -1092,12 +1077,6 @@ TOOLS = [
         "name": "inspect_blueprint_graph",
         "description": "Internal. Get Blueprint visual graph. Prefer inspect_asset(detail='graph').",
         "function": inspect_blueprint_graph,
-        "parameters": {"asset_path": {"type": "string"}},
-    },
-    {
-        "name": "inspect_blueprint_bytecode",
-        "description": "Internal. Get Blueprint bytecode CFG. Prefer inspect_asset(detail='bytecode').",
-        "function": inspect_blueprint_bytecode,
         "parameters": {"asset_path": {"type": "string"}},
     },
     {

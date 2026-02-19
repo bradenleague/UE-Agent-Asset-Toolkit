@@ -28,6 +28,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Optional
+from xml.etree import ElementTree as ET
 
 logger = logging.getLogger("unreal-asset-tools")
 
@@ -1578,6 +1579,69 @@ def _select_fuzzy_match(results: list[dict], query: str) -> dict | None:
     return None
 
 
+def _indent_xml(elem: ET.Element, level: int = 0) -> None:
+    """Add indentation to XML for readability."""
+    indent = "\n" + ("  " * level)
+    if len(elem):
+        if not elem.text or not elem.text.strip():
+            elem.text = indent + "  "
+        for child in elem:
+            _indent_xml(child, level + 1)
+        if not elem.tail or not elem.tail.strip():
+            elem.tail = indent
+    else:
+        if level and (not elem.tail or not elem.tail.strip()):
+            elem.tail = indent
+
+
+def _graph_json_to_xml(graph: dict) -> str:
+    """Convert parsed Blueprint graph JSON into XML for MCP output."""
+    root = ET.Element("graph")
+    name_el = ET.SubElement(root, "name")
+    name_el.text = str(graph.get("name") or "")
+
+    for func in graph.get("functions") or []:
+        func_el = ET.SubElement(
+            root,
+            "function",
+            {"name": str(func.get("name") or "")},
+        )
+        for node in func.get("nodes") or []:
+            node_attrs = {
+                "id": str(node.get("id") or ""),
+                "type": str(node.get("type") or ""),
+            }
+            if node.get("target"):
+                node_attrs["target"] = str(node.get("target"))
+            node_el = ET.SubElement(func_el, "node", node_attrs)
+
+            for pin in node.get("pins") or []:
+                pin_attrs = {
+                    "name": str(pin.get("name") or ""),
+                    "dir": str(pin.get("dir") or ""),
+                    "cat": str(pin.get("cat") or ""),
+                }
+                if pin.get("sub"):
+                    pin_attrs["sub"] = str(pin.get("sub"))
+                if pin.get("container"):
+                    pin_attrs["container"] = str(pin.get("container"))
+                if pin.get("default"):
+                    pin_attrs["default"] = str(pin.get("default"))
+                to_val = pin.get("to")
+                if isinstance(to_val, list):
+                    if to_val:
+                        pin_attrs["to"] = ",".join(str(v) for v in to_val)
+                elif isinstance(to_val, str) and to_val:
+                    pin_attrs["to"] = to_val
+                ET.SubElement(node_el, "pin", pin_attrs)
+
+    for err in graph.get("errors") or []:
+        root.append(ET.Comment(f"error: {json.dumps(err)}"))
+
+    _indent_xml(root)
+    return ET.tostring(root, encoding="unicode")
+
+
 def inspect_asset(
     path_or_query: str,
     fuzzy: bool = False,
@@ -1589,7 +1653,7 @@ def inspect_asset(
     Args:
         path_or_query: Asset path (/Game/..., /PluginName/...) or search query if fuzzy=True
         fuzzy: If True, search for the asset first, then inspect top match
-        detail: For Blueprints: 'graph' (visual node wiring) or 'bytecode' (control flow pseudocode)
+        detail: For Blueprints: 'graph' (visual node wiring)
 
     Returns:
         Type-specific structured data about the asset
@@ -1629,15 +1693,40 @@ def inspect_asset(
 
         # Parse the result (it returns a string)
         if isinstance(raw_result, str):
-            # Try to detect if it's XML or text
-            if raw_result.strip().startswith("<"):
+            raw_stripped = raw_result.strip()
+
+            if detail == "graph":
+                if raw_stripped.startswith("{"):
+                    graph_json = json.loads(raw_result)
+                    if "error" in graph_json:
+                        result = {"path": asset_path, **graph_json}
+                    else:
+                        xml_data = _graph_json_to_xml(graph_json)
+                        result = {
+                            "path": asset_path,
+                            "format": "xml",
+                            "data": xml_data,
+                        }
+                elif raw_stripped.startswith("<"):
+                    result = {
+                        "path": asset_path,
+                        "format": "xml",
+                        "data": raw_result,
+                    }
+                else:
+                    result = {
+                        "path": asset_path,
+                        "format": "text",
+                        "data": raw_result,
+                    }
+            elif raw_stripped.startswith("<"):
                 # Return as structured XML result
                 result = {
                     "path": asset_path,
                     "format": "xml",
                     "data": raw_result,
                 }
-            elif raw_result.strip().startswith("{"):
+            elif raw_stripped.startswith("{"):
                 # JSON result
                 result = json.loads(raw_result)
                 result["path"] = asset_path
@@ -1724,7 +1813,7 @@ Returns type-specific structured data:
   - Material: parameters (scalar, vector, texture), domain, blend mode
   - DataTable: row structure, columns, sample data
 
-For Blueprints, use detail='graph' for visual node wiring or detail='bytecode' for control flow pseudocode.
+For Blueprints, use detail='graph' for visual node wiring.
 
 Use unreal_search first to find assets, then inspect_asset for details.""",
             inputSchema={
@@ -1741,8 +1830,8 @@ Use unreal_search first to find assets, then inspect_asset for details.""",
                     },
                     "detail": {
                         "type": "string",
-                        "enum": ["graph", "bytecode"],
-                        "description": "For Blueprints: 'graph' (K2Node visual wiring) or 'bytecode' (control flow pseudocode)",
+                        "enum": ["graph"],
+                        "description": "For Blueprints: 'graph' (K2Node visual wiring)",
                     },
                 },
                 "required": ["path_or_query"],

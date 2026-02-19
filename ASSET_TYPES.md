@@ -38,7 +38,7 @@ The goal is to provide **focused, contextually relevant data** for each asset ty
 | **MaterialInstance** | `material` | ✅ Done | Parent, scalar/vector/texture params, static switches | Full parameter extraction |
 | **WidgetBlueprint** | `widgets` | ✅ Done | Widget tree, properties, parent-child hierarchy | MVVM bindings via subagent |
 | **DataTable** | `datatable` | ✅ Done | Row struct type, all rows with values | Works with any row struct |
-| **Blueprint** | `blueprint` | ✅ Done | Functions, bytecode analysis (calls, variables, casts) | Class hierarchy, events |
+| **Blueprint** | `blueprint` | ✅ Done | Functions (calls, variables, casts), class hierarchy, events | `detail='graph'` for node wiring |
 | DataAsset | `inspect` | ⚠️ Generic | All properties | Could benefit from type-specific extraction |
 | Texture2D | `inspect` | ⚠️ Generic | All properties | Could extract: dimensions, format, compression |
 | StaticMesh | `inspect` | ⚠️ Generic | All properties | Could extract: LODs, materials, collision |
@@ -165,7 +165,7 @@ Rows are truncated at 25 to prevent huge outputs.
 </blueprint>
 ```
 
-**Key feature**: Functions include `<calls>` showing what they actually do (via bytecode analysis), not just bytecode size.
+**Key feature**: Functions include `<calls>` showing what they actually do (call targets, variable access, casts).
 
 ## Adding New Asset Type Handlers
 

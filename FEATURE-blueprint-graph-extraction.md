@@ -10,19 +10,30 @@ This is the last major gap preventing full Blueprint comprehension (and eventual
 
 **Phase 1 is complete.** The `graph` command (`ExtractGraph()` in Program.cs) parses K2Node
 pin data from binary `Extras` blobs and outputs full node-to-node connection graphs. Exposed
-via MCP as `inspect_blueprint_graph`. Output is JSON (should be converted to XML for
-consistency with other commands).
+via MCP through `inspect_asset(detail='graph')`. Output is JSON.
 
 **Phase 2 is complete.** The `bytecode` command (`ExtractBytecode()` + `BuildCFG()` +
 `ExprToString()` in Program.cs) builds proper control flow graphs from compiled Kismet
-bytecode and emits per-function pseudocode. Exposed via MCP as `inspect_blueprint_bytecode`.
-Output is XML.
+bytecode and emits per-function pseudocode. Available as a CLI command; **deprecated from
+MCP** — the graph output (Phase 1) provides more actionable data at lower cost.
+
+The `graph` command is routed through the `inspect_asset` MCP tool's `detail` parameter
+(wired through `mcp_server.py` → `tools.py` → AssetParser CLI). A standalone tool
+`inspect_blueprint_graph` exists as an internal helper.
 
 Validated on BP_GM (Cropout): 20 functions, 129 basic blocks, 469 pseudocode statements,
 18 loop targets detected. Also validated on BP_Interactable and BP_Player.
 
 The old flat `AnalyzeExpression()` still exists and is used by the `blueprint` command for
-call/variable lists. The new `bytecode` command supersedes it for detailed analysis.
+call/variable lists.
+
+### UE 5.7 Compatibility Fix
+
+The Phase 1 pin parser (`ReadOnePin()`) required a fix for UE 5.7: the
+`bSerializeAsSinglePrecisionFloat` field is gated by a custom version
+(`FUE5ReleaseStreamObjectVersion.SerializeFloatPinDefaultValuesAsSinglePrecision`),
+not by a coarse engine version check. Without this, the pin binary reader would overshoot
+the stream on 5.7 assets.
 
 ## Two Data Sources Available
 
@@ -65,7 +76,7 @@ Key control-flow instructions:
 ### Phase 1: K2Node Pin Extraction — DONE
 
 Implemented as `graph` command in Program.cs (`ExtractGraph()`, ~250 lines) + `ReadOnePin()` binary
-pin parser (~160 lines). Exposed via MCP as `inspect_blueprint_graph` in tools.py.
+pin parser (~160 lines). Exposed via MCP as `inspect_asset(detail='graph')`.
 
 **What it does:**
 - Walks `NormalExport` entries whose class type starts with `K2Node_`
@@ -75,14 +86,12 @@ pin parser (~160 lines). Exposed via MCP as `inspect_blueprint_graph` in tools.p
 - Filters hidden/orphaned pins and unconnected nodes
 - Resolves node targets (function names, variable names) from PropertyData structs
 
-**Current output:** JSON. Should be converted to XML for consistency with `blueprint` command.
-
-**TODO:** Convert output format from JSON to XML.
+**Output:** JSON with nodes, pins, and connections grouped by function.
 
 ### Phase 2: Bytecode Control Flow Graph — DONE
 
-Implemented as `bytecode` command in Program.cs (`ExtractBytecode()` + `BuildCFG()` + `ExprToString()`,
-~450 lines C#). Exposed via MCP as `inspect_blueprint_bytecode` in tools.py.
+Implemented as `bytecode` CLI command in Program.cs (`ExtractBytecode()` + `BuildCFG()` + `ExprToString()`,
+~450 lines C#). Deprecated from MCP — graph output (Phase 1) is more actionable.
 
 **What it does:**
 - Walks `ScriptBytecode[]`, accumulates byte offsets via `GetSize()` → builds offset→index map
@@ -116,7 +125,53 @@ BP_Interactable, BP_Player (1206 elements). Zero unhandled expression types.
 </function>
 ```
 
-### Phase 3: Hybrid Cross-Reference
+### Phase 3: Toward C++ Porting — NOT STARTED
+
+With Phases 1 and 2 complete, we can fully understand what a Blueprint *does*. What's
+still missing is metadata needed for a faithful C++ port. This breaks into two sub-problems:
+
+#### 3a: Member Variable Declarations
+
+The bytecode shows variables being *used* (`Resources`, `Town Hall`, `SpawnRef`, `UI_HUD`,
+`Villager Count`) but doesn't declare them. For C++ we need:
+
+- Exact UE types (`TMap<EResourceType, int32>`, `TSoftClassPtr<AActor>`, etc.)
+- UPROPERTY specifiers (EditAnywhere, BlueprintReadWrite, Replicated, Category, etc.)
+- Default values
+
+**Approach:** Add a `properties` command that dumps `FPropertyExport` / `PropertyData` from
+the class default object. UAssetAPI already deserializes these — we just need to format them.
+
+#### 3b: Ubergraph Decomposition
+
+Blueprint compiles all event handlers into a single `ExecuteUbergraph_*` function with
+`EX_ComputedJump` dispatch based on an `EntryPoint` offset. In C++, each event is a
+separate function. We need to:
+
+- Map each stub function's entry point offset (e.g., `ExecuteUbergraph_BP_GM(3006)`) to
+  the corresponding block range in the ubergraph
+- Slice the ubergraph into independent event handler regions
+- Re-emit each region as a standalone function
+
+**Approach:** Walk stub functions, collect their `EntryPoint` constants, trace reachable
+blocks from each entry point in the CFG, and partition the ubergraph.
+
+#### 3c: Additional Metadata for Faithful Porting
+
+- **Delegate type signatures** — `DECLARE_DYNAMIC_MULTICAST_DELEGATE` macro parameters.
+  Visible from delegate call sites in bytecode (parameter names/types) but not formally declared.
+- **UFUNCTION metadata** — BlueprintCallable, BlueprintPure, Category strings. Stored in
+  `FunctionExport.FunctionFlags` (partially extracted) but Category/DisplayName are in
+  field-level metadata we don't currently read.
+- **Soft/asset references** — `TownHall_Ref`, `Villager_Ref` are soft class refs; need to
+  resolve the exact `TSoftClassPtr<T>` template type from the property declaration.
+- **Latent action translation** — `Delay()`, `LoadAssetClass()`, `DelayUntilNextTick()` use
+  Blueprint's latent system with `LatentActionInfo`. These map to `FTimerHandle`,
+  `FStreamableManager`, or custom latent actions in C++.
+- **Interface dependencies** — need to inspect referenced Blueprints (BPI_GI, BPI_Villager,
+  etc.) to know their full interface signatures.
+
+#### 3d: Hybrid Cross-Reference (Original Phase 3 Idea)
 
 Correlate K2Node graph with bytecode for maximum fidelity.
 
@@ -127,12 +182,29 @@ Correlate K2Node graph with bytecode for maximum fidelity.
 
 ## Comparison
 
-| Aspect | K2Node Graph (Phase 1) | Bytecode CFG (Phase 2) | Hybrid (Phase 3) |
+| Aspect | K2Node Graph (Phase 1) | Bytecode CFG (Phase 2) | With Phase 3 |
 |---|---|---|---|
-| Effort | **Done** (~410 lines C#) | **Done** (~450 lines C#) | Low (glue layer) |
+| Effort | **Done** (~410 lines C#) | **Done** (~450 lines C#) | Not started |
 | Shows data flow | Yes (pin connections) | Partial (variable assignments) | Full |
 | Shows control flow | Partial (exec pin chains) | Full (jumps, loops, switches) | Full |
 | Shows constants/defaults | Yes (DefaultValue on pins) | Yes (EX_*Const expressions) | Full |
 | Handles macros | Pre-expansion (raw nodes) | Post-expansion (compiled) | Both views |
 | Loop detection | No | Yes (back-edge analysis) | Yes |
 | Accuracy | Editor fidelity | VM fidelity | Best of both |
+| Member variable types | Pin types (partial) | Inferred from usage | Explicit declarations |
+| Ubergraph decomposition | N/A (pre-compilation) | Flat mega-function | Per-event functions |
+| C++ portability | ~60% | ~75% | ~95% |
+
+## What Can We Do Today
+
+With Phases 1+2, an LLM or developer can:
+- **Fully understand** what any Blueprint function does (logic, branches, loops, calls)
+- **Explain** a Blueprint's behavior in plain English (demonstrated on BP_GM)
+- **Trace** data flow through pin connections and variable assignments
+- **Identify** dependencies, interfaces, and external calls
+- **Draft** a C++ port that captures the logic correctly, with manual type annotation
+
+What requires Phase 3:
+- **Automated** C++ code generation with correct UPROPERTY/UFUNCTION declarations
+- **Decomposed** event handlers (instead of monolithic ubergraph)
+- **Faithful** delegate and latent action translation

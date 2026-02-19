@@ -246,6 +246,8 @@ if (args.Length < 2)
     Console.WriteLine("  widgets <path>    - Extract widget tree from Widget Blueprint");
     Console.WriteLine("  datatable <path>  - Extract rows from a DataTable");
     Console.WriteLine("  blueprint <path>  - Extract Blueprint functions and variables");
+    Console.WriteLine("  graph <path>      - Extract Blueprint node graph as XML");
+    Console.WriteLine("  graph-json <path> - Extract Blueprint node graph as JSON");
     Console.WriteLine("  bytecode <path>   - Extract bytecode control flow graph and pseudocode");
     Console.WriteLine("  material <path>   - Extract Material/MaterialInstance parameters");
     Console.WriteLine("  references <path> - Extract all asset references (imports)");
@@ -410,7 +412,10 @@ try
             ExtractReferences(asset);
             break;
         case "graph":
-            ExtractGraph(asset);
+            ExtractGraph(asset, "xml");
+            break;
+        case "graph-json":
+            ExtractGraph(asset, "json");
             break;
         case "bytecode":
             ExtractBytecode(asset);
@@ -1604,7 +1609,7 @@ string EscapeXml(string text)
 }
 
 // ============================================================================
-// GRAPH - Extract Blueprint node graph with pin connections as JSON
+// GRAPH - Extract Blueprint node graph with pin connections (XML default, JSON via graph-json)
 // ============================================================================
 
 // --- Pin binary reader helpers ---
@@ -1919,7 +1924,7 @@ ParsedPin ReadOnePin(BinaryReader r, UAsset asset, IReadOnlyList<FString> nameMa
     return pin;
 }
 
-void ExtractGraph(UAsset asset)
+void ExtractGraph(UAsset asset, string outputFormat)
 {
     var nameMap = asset.GetNameMapIndexList();
 
@@ -2065,19 +2070,94 @@ void ExtractGraph(UAsset asset)
         }
     }
 
-    // --- Build output per function/graph ---
-    var functions = new Dictionary<string, object>();
+    // --- Identify Knot and inlineable nodes for graph compaction ---
+    var knotNodeIds = new HashSet<int>();
+    var inlineNodeIds = new HashSet<int>();
+    // Maps (exportIndex, pinName) → compact inline string
+    var inlineMap = new Dictionary<(int, string), string>();
+
+    foreach (var (idx, node) in k2Nodes)
+    {
+        var classType = node.GetExportClassType()?.ToString() ?? "";
+
+        if (classType == "K2Node_Knot")
+        {
+            knotNodeIds.Add(idx);
+        }
+        else if (classType == "K2Node_Self")
+        {
+            inlineNodeIds.Add(idx);
+            if (nodePins.TryGetValue(idx, out var selfPins))
+            {
+                foreach (var pin in selfPins)
+                {
+                    if (pin.Direction == "out")
+                        inlineMap[(idx, pin.Name)] = "self";
+                }
+            }
+        }
+        else if (classType == "K2Node_VariableGet")
+        {
+            if (nodePins.TryGetValue(idx, out var vgPins))
+            {
+                var outPins = vgPins.Where(p => p.Direction == "out").ToList();
+                if (outPins.Count <= 2)
+                {
+                    var varName = ResolveNodeTarget(node, classType) ?? "Unknown";
+                    inlineNodeIds.Add(idx);
+                    foreach (var pin in outPins)
+                        inlineMap[(idx, pin.Name)] = $"var:{varName}";
+                }
+            }
+        }
+    }
+
+    // Resolve Knot pass-throughs: follow chains of Knots to all real targets (handles fan-out)
+    List<(int exportIndex, string pinName)> ResolveKnotTargets(int exportIdx, string pinName, HashSet<(int, Guid)>? visited = null)
+    {
+        if (!knotNodeIds.Contains(exportIdx))
+            return new List<(int, string)> { (exportIdx, pinName) };
+        if (!nodePins.TryGetValue(exportIdx, out var knotPins))
+            return new List<(int, string)>();
+
+        // Find the pin we arrived at
+        var arrivedPin = knotPins.FirstOrDefault(p => p.Name == pinName);
+        if (arrivedPin.Name == null) return new List<(int, string)>();
+
+        // Follow through to the OTHER direction pin (in→out, out→in)
+        var otherDir = arrivedPin.Direction == "in" ? "out" : "in";
+        var otherPin = knotPins.FirstOrDefault(p => p.Direction == otherDir);
+        if (otherPin.Name == null || otherPin.LinkedTo.Count == 0) return new List<(int, string)>();
+
+        visited ??= new HashSet<(int, Guid)>();
+        var results = new List<(int, string)>();
+        foreach (var (nextNodeRef, nextPinGuid) in otherPin.LinkedTo)
+        {
+            if (!visited.Add((nextNodeRef, nextPinGuid))) continue; // cycle
+            if (pinGuidMap.TryGetValue(nextPinGuid, out var next))
+                results.AddRange(ResolveKnotTargets(next.exportIndex, next.pinName, visited));
+        }
+        return results;
+    }
+
+    // Asset name
+    var bpExport = asset.Exports
+        .OfType<NormalExport>()
+        .FirstOrDefault(e => e.GetExportClassType()?.ToString()?.Contains("Blueprint") == true);
+    var bpName = bpExport?.ObjectName.ToString()
+        ?? Path.GetFileNameWithoutExtension(assetPath);
+
+    var functions = new List<GraphFunctionData>();
 
     foreach (var (graphName, nodeIndices) in graphNodeGroups)
     {
-        var nodes = new List<object>();
-        var connections = new List<object>();
-        var connectionSet = new HashSet<string>(); // dedup key
+        var functionNodes = new List<GraphNodeData>();
 
         foreach (var nodeIdx in nodeIndices)
         {
             if (!k2Nodes.TryGetValue(nodeIdx, out var node)) continue;
             if (!nodePins.TryGetValue(nodeIdx, out var pins)) continue;
+            if (knotNodeIds.Contains(nodeIdx) || inlineNodeIds.Contains(nodeIdx)) continue;
 
             var classType = node.GetExportClassType()?.ToString() ?? "";
             var shortType = classType.StartsWith("K2Node_") ? classType.Substring(7) : classType;
@@ -2087,105 +2167,151 @@ void ExtractGraph(UAsset asset)
             bool hasAnyConnection = pins.Any(p => p.LinkedTo.Count > 0);
             if (!hasAnyConnection) continue;
 
-            var pinList = new List<object>();
+            var nodePinsList = new List<GraphPinData>();
+
             foreach (var pin in pins)
             {
                 // Skip hidden and orphaned pins
                 if (pin.IsHidden || pin.IsOrphaned) continue;
 
-                var pinObj = new Dictionary<string, object>
+                // Skip self input pins with no connections (noise)
+                if (pin.Name == "self" && pin.Direction == "in" && pin.LinkedTo.Count == 0)
+                    continue;
+
+                // Skip unconnected pins with no user-set default (just node shape declarations)
+                if (pin.LinkedTo.Count == 0 && string.IsNullOrWhiteSpace(pin.DefaultValue))
+                    continue;
+
+                var pinData = new GraphPinData
                 {
-                    ["name"] = pin.Name,
-                    ["direction"] = pin.Direction,
-                    ["category"] = pin.Category,
+                    Name = pin.Name,
+                    Dir = pin.Direction,
+                    Cat = pin.Category,
                 };
 
                 if (!string.IsNullOrEmpty(pin.SubCategoryObject))
-                    pinObj["sub_type"] = pin.SubCategoryObject;
+                    pinData.Sub = pin.SubCategoryObject;
+                if (pin.ContainerType == 1) pinData.Container = "array";
+                else if (pin.ContainerType == 2) pinData.Container = "set";
+                else if (pin.ContainerType == 3) pinData.Container = "map";
                 if (!string.IsNullOrEmpty(pin.DefaultValue))
-                    pinObj["default"] = pin.DefaultValue;
-                if (pin.ContainerType == 1) pinObj["container"] = "array";
-                else if (pin.ContainerType == 2) pinObj["container"] = "set";
-                else if (pin.ContainerType == 3) pinObj["container"] = "map";
+                    pinData.Default = pin.DefaultValue;
 
-                // Resolve connections
+                // Resolve connections: follow through Knots, substitute inline refs
                 if (pin.LinkedTo.Count > 0)
                 {
-                    var connectedTo = new List<object>();
+                    var targets = new List<string>();
                     foreach (var (linkedNodeRef, linkedPinGuid) in pin.LinkedTo)
                     {
-                        if (pinGuidMap.TryGetValue(linkedPinGuid, out var resolved))
+                        if (!pinGuidMap.TryGetValue(linkedPinGuid, out var resolved))
                         {
-                            connectedTo.Add(new { node = resolved.exportIndex, pin = resolved.pinName });
-
-                            // Build deduped connection (smaller index first)
-                            int fromNode = nodeIdx, toNode = resolved.exportIndex;
-                            string fromPin = pin.Name, toPin = resolved.pinName;
-                            if (fromNode > toNode || (fromNode == toNode && string.Compare(fromPin, toPin) > 0))
-                            {
-                                (fromNode, toNode) = (toNode, fromNode);
-                                (fromPin, toPin) = (toPin, fromPin);
-                            }
-                            var key = $"{fromNode}:{fromPin}->{toNode}:{toPin}";
-                            if (connectionSet.Add(key))
-                            {
-                                connections.Add(new
-                                {
-                                    from_node = fromNode,
-                                    from_pin = fromPin,
-                                    to_node = toNode,
-                                    to_pin = toPin
-                                });
-                            }
+                            targets.Add($"{linkedNodeRef}:{linkedPinGuid}");
+                            continue;
                         }
-                        else
+
+                        // Follow through Knot nodes to find all real targets (handles fan-out)
+                        var finals = ResolveKnotTargets(resolved.exportIndex, resolved.pinName);
+                        foreach (var (finalIdx, finalPin) in finals)
                         {
-                            connectedTo.Add(new { node = linkedNodeRef, pin = linkedPinGuid.ToString() });
+                            // Substitute inline references for VariableGet/Self nodes
+                            if (inlineMap.TryGetValue((finalIdx, finalPin), out var inlineRef))
+                                targets.Add(inlineRef);
+                            else
+                                targets.Add($"{finalIdx}:{finalPin}");
                         }
                     }
-                    pinObj["connected_to"] = connectedTo;
+                    if (targets.Count > 0)
+                        pinData.To = targets;
                 }
 
-                pinList.Add(pinObj);
+                nodePinsList.Add(pinData);
             }
 
-            var nodeObj = new Dictionary<string, object>
+            functionNodes.Add(new GraphNodeData
             {
-                ["id"] = nodeIdx,
-                ["type"] = shortType,
-            };
-            if (target != null) nodeObj["target"] = target;
-            nodeObj["pins"] = pinList;
-
-            nodes.Add(nodeObj);
+                Id = nodeIdx,
+                Type = shortType,
+                Target = target,
+                Pins = nodePinsList,
+            });
         }
 
-        if (nodes.Count > 0)
+        if (functionNodes.Count > 0)
         {
-            functions[graphName] = new
+            functions.Add(new GraphFunctionData
             {
-                nodes = nodes,
-                connections = connections
-            };
+                Name = graphName,
+                Nodes = functionNodes,
+            });
         }
     }
 
-    // --- Output ---
-    var assetPath = asset.FilePath ?? "";
-    // Convert to game path if possible
-    var gamePath = assetPath;
-    var contentIdx = assetPath.IndexOf("/Content/");
-    if (contentIdx >= 0)
-        gamePath = "/Game" + assetPath.Substring(contentIdx + 8).Replace(".uasset", "");
-
-    var result = new Dictionary<string, object>
+    var graphData = new GraphData
     {
-        ["path"] = gamePath,
-        ["functions"] = functions,
+        Name = bpName,
+        Functions = functions,
+        Errors = parseErrors.Count > 0 ? parseErrors : null,
     };
-    if (parseErrors.Count > 0) result["parse_errors"] = parseErrors;
 
-    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    if (outputFormat == "json")
+    {
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        };
+        Console.Write(JsonSerializer.Serialize(graphData, options));
+        return;
+    }
+
+    // XML output
+    var xml = new System.Text.StringBuilder();
+    xml.AppendLine("<graph>");
+    xml.AppendLine($"  <name>{EscapeXml(bpName)}</name>");
+
+    foreach (var function in functions)
+    {
+        xml.AppendLine($"  <function name=\"{EscapeXml(function.Name)}\">");
+        foreach (var node in function.Nodes)
+        {
+            var targetAttr = !string.IsNullOrEmpty(node.Target) ? $" target=\"{EscapeXml(node.Target)}\"" : "";
+            xml.AppendLine($"    <node id=\"{node.Id}\" type=\"{EscapeXml(node.Type)}\"{targetAttr}>");
+
+            foreach (var pin in node.Pins)
+            {
+                var attrs = new System.Text.StringBuilder();
+                attrs.Append($" name=\"{EscapeXml(pin.Name)}\" dir=\"{pin.Dir}\" cat=\"{EscapeXml(pin.Cat)}\"");
+
+                if (!string.IsNullOrEmpty(pin.Sub))
+                    attrs.Append($" sub=\"{EscapeXml(pin.Sub)}\"");
+                if (!string.IsNullOrEmpty(pin.Container))
+                    attrs.Append($" container=\"{pin.Container}\"");
+                if (!string.IsNullOrEmpty(pin.Default))
+                    attrs.Append($" default=\"{EscapeXml(pin.Default)}\"");
+                if (pin.To != null && pin.To.Count > 0)
+                    attrs.Append($" to=\"{EscapeXml(string.Join(",", pin.To))}\"");
+
+                xml.AppendLine($"      <pin{attrs}/>");
+            }
+
+            xml.AppendLine("    </node>");
+        }
+        xml.AppendLine("  </function>");
+    }
+
+    // Parse errors as XML comments
+    if (parseErrors.Count > 0)
+    {
+        foreach (var err in parseErrors)
+        {
+            var errStr = JsonSerializer.Serialize(err);
+            xml.AppendLine($"  <!-- error: {EscapeXml(errStr)} -->");
+        }
+    }
+
+    xml.AppendLine("</graph>");
+    Console.Write(xml.ToString());
 }
 
 // ============================================================================
@@ -5451,6 +5577,38 @@ struct ParsedPin
     public bool IsHidden;
     public bool IsOrphaned;
     public List<(int nodeExportIndex, Guid pinGuid)> LinkedTo;
+}
+
+class GraphPinData
+{
+    public string Name { get; set; } = "";
+    public string Dir { get; set; } = "";
+    public string Cat { get; set; } = "";
+    public string? Sub { get; set; }
+    public string? Container { get; set; }
+    public string? Default { get; set; }
+    public List<string>? To { get; set; }
+}
+
+class GraphNodeData
+{
+    public int Id { get; set; }
+    public string Type { get; set; } = "";
+    public string? Target { get; set; }
+    public List<GraphPinData> Pins { get; set; } = new();
+}
+
+class GraphFunctionData
+{
+    public string Name { get; set; } = "";
+    public List<GraphNodeData> Nodes { get; set; } = new();
+}
+
+class GraphData
+{
+    public string Name { get; set; } = "";
+    public List<GraphFunctionData> Functions { get; set; } = new();
+    public List<object>? Errors { get; set; }
 }
 
 // Bytecode CFG types
