@@ -44,6 +44,53 @@ def get_asset_timeout() -> int:
         return 60
 
 
+def _get_available_memory_mb() -> int | None:
+    """Get available system memory in MB. Returns None if unavailable.
+
+    Respects UE_INDEX_MAX_BATCH_MEMORY env var as an explicit override.
+    """
+    override = os.environ.get("UE_INDEX_MAX_BATCH_MEMORY")
+    if override:
+        try:
+            return max(1, int(override))
+        except (TypeError, ValueError):
+            pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available // (1024 * 1024)
+    except ImportError:
+        pass
+    # Fallback for Linux/macOS without psutil
+    try:
+        pages = os.sysconf("SC_AVPHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        return (pages * page_size) // (1024 * 1024)
+    except (ValueError, OSError, AttributeError):
+        pass
+    return None
+
+
+def _get_process_rss_mb() -> int | None:
+    """Get current process RSS in MB. Returns None if unavailable."""
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss // (1024 * 1024)
+    except ImportError:
+        pass
+    try:
+        import resource
+        # On macOS, ru_maxrss is in bytes; on Linux, in KB
+        import platform as _plat
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        if _plat.system() == "Darwin":
+            return usage.ru_maxrss // (1024 * 1024)
+        else:
+            return usage.ru_maxrss // 1024
+    except (ImportError, AttributeError):
+        pass
+    return None
+
+
 from .schemas import (
     DocChunk,
     AssetSummary,
@@ -490,6 +537,8 @@ class AssetIndexer:
         type_filter: list[str] = None,
         recursive: bool = True,
         max_assets: int = None,
+        exclude_patterns: list[str] = None,
+        dry_run: bool = False,
     ) -> dict:
         """
         Index assets using batch API for massive speedup.
@@ -508,6 +557,8 @@ class AssetIndexer:
                         If provided, only assets matching these types will be indexed after classification.
             recursive: If False, scan only the exact folder (no subfolders)
             max_assets: Optional cap on number of discovered assets to process
+            exclude_patterns: Directory name patterns to skip during scan
+                            (e.g., ["__ExternalActors__", "__ExternalObjects__"])
 
         Returns:
             Dict with indexing statistics (includes 'timing' dict if UE_INDEX_TIMING=1)
@@ -550,22 +601,62 @@ class AssetIndexer:
         assets = []
         discovery_start = time.perf_counter()
 
+        _is_tty = sys.stderr.isatty()
+
         def scan_with_progress(path: Path, label: str) -> list:
-            """Scan directory with periodic progress updates."""
+            """Scan directory with periodic progress updates.
+
+            When exclude_patterns is set, uses os.walk() with in-place
+            directory pruning to skip excluded trees at the filesystem
+            level (avoids walking 984K OFPA files only to discard them).
+
+            Non-TTY mode uses newline-delimited output instead of \\r
+            overwrites, emitting updates at wider intervals to avoid
+            flooding logs.
+            """
             found = []
             last_update = 0
-            walker = path.rglob("*.uasset") if recursive else path.glob("*.uasset")
-            for asset in walker:
-                found.append(asset)
-                # Update every 1000 files
-                if len(found) - last_update >= 1000:
-                    sys.stderr.write(
-                        f"\r  Scanning {label}... {len(found):,} files found"
-                    )
-                    sys.stderr.flush()
-                    last_update = len(found)
-            # Clear the line and print final count
-            if last_update > 0:
+            update_interval = 1000 if _is_tty else 10000
+
+            if exclude_patterns and recursive:
+                # os.walk with in-place pruning — skips excluded subtrees entirely
+                for dirpath, dirnames, filenames in os.walk(path):
+                    dirnames[:] = [
+                        d for d in dirnames
+                        if not any(pat in d for pat in exclude_patterns)
+                    ]
+                    for f in filenames:
+                        if f.endswith(".uasset"):
+                            found.append(Path(dirpath) / f)
+                            if len(found) - last_update >= update_interval:
+                                if _is_tty:
+                                    sys.stderr.write(
+                                        f"\r  Scanning {label}... {len(found):,} files found"
+                                    )
+                                else:
+                                    sys.stderr.write(
+                                        f"  Scanning {label}... {len(found):,} files found\n"
+                                    )
+                                sys.stderr.flush()
+                                last_update = len(found)
+            else:
+                walker = path.rglob("*.uasset") if recursive else path.glob("*.uasset")
+                for asset in walker:
+                    found.append(asset)
+                    if len(found) - last_update >= update_interval:
+                        if _is_tty:
+                            sys.stderr.write(
+                                f"\r  Scanning {label}... {len(found):,} files found"
+                            )
+                        else:
+                            sys.stderr.write(
+                                f"  Scanning {label}... {len(found):,} files found\n"
+                            )
+                        sys.stderr.flush()
+                        last_update = len(found)
+
+            # Clear the line (TTY only — non-TTY already emitted newlines)
+            if last_update > 0 and _is_tty:
                 sys.stderr.write("\r" + " " * 60 + "\r")
             return found
 
@@ -657,6 +748,21 @@ class AssetIndexer:
                 )
                 return stats
 
+        # Memory-aware batch sizing: auto-cap batch_size if system memory is low
+        avail_mb = _get_available_memory_mb()
+        if avail_mb is not None:
+            # Heuristic: ~1.5 MB per asset in a batch, reserve 1 GB headroom, min batch 50
+            headroom_mb = 1024
+            usable_mb = max(0, avail_mb - headroom_mb)
+            mem_batch_cap = max(50, int(usable_mb / 1.5))
+            if mem_batch_cap < batch_size:
+                print(
+                    f"Memory: {avail_mb:,} MB available, auto-capping batch_size "
+                    f"from {batch_size} to {mem_batch_cap}",
+                    file=sys.stderr,
+                )
+                batch_size = mem_batch_cap
+
         # Phase 1: Ultra-fast classification using batch-fast (header-only parsing)
         # This is 10-100x faster than batch-summary - only reads magic number and file size,
         # detects asset type from filename prefixes without loading UAssetAPI
@@ -718,6 +824,22 @@ class AssetIndexer:
 
         record_phase("batch_fast", phase1_start, len(asset_summaries))
         print(f"Fast-classified {len(asset_summaries)} assets", file=sys.stderr)
+
+        # Dry-run early exit: return stats after classification, skip DB writes
+        if dry_run:
+            if type_filter:
+                type_filter_set = set(type_filter)
+                asset_summaries = {
+                    p: s for p, s in asset_summaries.items()
+                    if s.get("asset_type", "Unknown") in type_filter_set
+                }
+                # Recompute by_type counts after filtering
+                stats["by_type"] = {}
+                for s in asset_summaries.values():
+                    t = s.get("asset_type", "Unknown")
+                    stats["by_type"][t] = stats["by_type"].get(t, 0) + 1
+            stats["asset_summaries"] = asset_summaries
+            return stats
 
         # Phase 1.5: Reclassify Unknown non-OFPA assets using batch-summary
         # batch-fast only reads headers so DataAsset subclasses appear as "Unknown".
@@ -1166,6 +1288,9 @@ class AssetIndexer:
                 f"Subprocess calls: {timing_data['subprocess_calls']}", file=sys.stderr
             )
             print(f"Database writes: {timing_data['db_writes']:,}", file=sys.stderr)
+            rss = _get_process_rss_mb()
+            if rss is not None:
+                print(f"Peak RSS: {rss:,} MB", file=sys.stderr)
             print("=" * 60, file=sys.stderr)
 
         # Include timing in stats if enabled
