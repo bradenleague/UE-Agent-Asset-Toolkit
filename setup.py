@@ -72,41 +72,14 @@ def check_prerequisites() -> tuple[str, str]:
 
 def detect_engine_path(uproject_path: Path) -> str:
     """Try to detect UE Editor path from project file."""
-    system = platform.system()
-
-    try:
-        with open(uproject_path, 'r') as f:
-            proj = json.load(f)
-            engine_assoc = proj.get("EngineAssociation", "")
-
-        if not engine_assoc:
-            return ""
-
-        possible_paths = []
-
-        if system == "Windows":
-            possible_paths = [
-                Path(rf"C:\Program Files\Epic Games\UE_{engine_assoc}\Engine\Binaries\Win64\UnrealEditor-Cmd.exe"),
-                Path(rf"D:\UnrealDev\UE_{engine_assoc}\Engine\Binaries\Win64\UnrealEditor-Cmd.exe"),
-            ]
-        elif system == "Darwin":
-            possible_paths = [
-                Path(f"/Users/Shared/Epic Games/UE_{engine_assoc}/Engine/Binaries/Mac/UnrealEditor-Cmd"),
-                Path.home() / f"UnrealEngine/UE_{engine_assoc}/Engine/Binaries/Mac/UnrealEditor-Cmd",
-            ]
-        else:  # Linux
-            possible_paths = [
-                Path.home() / f"UnrealEngine/UE_{engine_assoc}/Engine/Binaries/Linux/UnrealEditor-Cmd",
-                Path(f"/opt/unreal-engine/UE_{engine_assoc}/Engine/Binaries/Linux/UnrealEditor-Cmd"),
-            ]
-
-        for path in possible_paths:
-            if path.exists():
-                return str(path)
-
-    except Exception:
-        pass
-
+    # Import the shared implementation (works whether run from repo root or UnrealAgent/)
+    eng_detect_path = Path(__file__).parent / "UnrealAgent" / "engine_detect.py"
+    if eng_detect_path.exists():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("engine_detect", eng_detect_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.detect_engine_path(uproject_path)
     return ""
 
 

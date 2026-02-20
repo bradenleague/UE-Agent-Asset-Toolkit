@@ -207,53 +207,13 @@ def set_active_project(project_name: str):
 
 def _detect_engine_path(project_path: str) -> str:
     """Try to detect UE Editor path from project file."""
-    import platform
-
-    system = platform.system()
-
     try:
-        with open(project_path, "r") as f:
-            proj = json.load(f)
-            engine_assoc = proj.get("EngineAssociation", "")
-
-            possible_paths = []
-
-            if system == "Windows":
-                possible_paths = [
-                    # Installed builds (Epic launcher)
-                    rf"C:\Program Files\Epic Games\UE_{engine_assoc}\Engine\Binaries\Win64\UnrealEditor-Cmd.exe",
-                    # Source builds
-                    rf"D:\UnrealDev\UE_{engine_assoc}\Engine\Binaries\Win64\UnrealEditor-Cmd.exe",
-                    rf"D:\UnrealDev\{engine_assoc}\Engine\Binaries\Win64\UnrealEditor-Cmd.exe",
-                ]
-            elif system == "Darwin":
-                # macOS paths
-                possible_paths = [
-                    # Epic launcher installs
-                    f"/Users/Shared/Epic Games/UE_{engine_assoc}/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor",
-                    f"/Users/Shared/Epic Games/UE_{engine_assoc}/Engine/Binaries/Mac/UnrealEditor-Cmd",
-                    # Source builds
-                    os.path.expanduser(
-                        f"~/UnrealEngine/UE_{engine_assoc}/Engine/Binaries/Mac/UnrealEditor-Cmd"
-                    ),
-                ]
-            else:
-                # Linux paths
-                possible_paths = [
-                    os.path.expanduser(
-                        f"~/UnrealEngine/UE_{engine_assoc}/Engine/Binaries/Linux/UnrealEditor-Cmd"
-                    ),
-                    f"/opt/unreal-engine/UE_{engine_assoc}/Engine/Binaries/Linux/UnrealEditor-Cmd",
-                ]
-
-            for path in possible_paths:
-                if os.path.exists(path):
-                    return path
-
-    except Exception:
-        pass
-
-    return ""
+        # Package import path (e.g., `from UnrealAgent import tools`)
+        from .engine_detect import detect_engine_path
+    except ImportError:
+        # Top-level import path used by CLI (`import tools`)
+        from engine_detect import detect_engine_path
+    return detect_engine_path(project_path)
 
 
 def add_project(
