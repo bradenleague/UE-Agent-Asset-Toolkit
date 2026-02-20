@@ -52,9 +52,9 @@ source .venv/bin/activate        # macOS/Linux
 python setup.py /path/to/YourProject.uproject
 
 # 4. Build the search index
-python index.py --all
+python index.py
 # Optional: include plugin content too (slower on large plugin-heavy projects)
-# python index.py --all --plugins
+# python index.py --plugins
 
 # 5. Connect to your MCP client (see below)
 ```
@@ -194,10 +194,10 @@ Build the semantic index from the repo root.
 
 | Command | Description |
 |---------|-------------|
-| `--all` | Full hybrid index (semantic + lightweight for all assets) |
-| `--all --plugins` | Full index including plugin content (can be much slower on large projects) |
-| `--all --plugins --embed` | Full index + vector embeddings (best quality) |
-| `--quick` | Only WidgetBlueprint, DataTable, MaterialInstance |
+| `--profile hybrid` | Full hybrid index (semantic + lightweight for all assets) |
+| `--plugins` | Full index including plugin content (can be much slower on large projects) |
+| `--plugins --embed` | Full index + vector embeddings (best quality) |
+| `--profile quick` | Only WidgetBlueprint, DataTable, MaterialInstance |
 | `--source` | C++ source files (UCLASS, UPROPERTY macros) |
 | `--path UI` | Only index assets under a specific path (see note below) |
 | `--force` | Re-index everything (ignore fingerprint cache) |
@@ -205,9 +205,9 @@ Build the semantic index from the repo root.
 
 **Path convention:** The `--path` option uses Unreal's virtual path convention where `/Game/` maps to your `Content/` folder. Use the folder name relative to Content:
 ```bash
-python index.py --all --path UI          # indexes Content/UI/
-python index.py --all --path UI/HUD      # indexes Content/UI/HUD/
-python index.py --all --path /Game/UI    # same as above (explicit form)
+python index.py --path UI          # indexes Content/UI/
+python index.py --path UI/HUD      # indexes Content/UI/HUD/
+python index.py --path /Game/UI    # same as above (explicit form)
 ```
 Do NOT use filesystem paths like `C:\Projects\MyGame\Content\UI` - use the virtual path instead.
 
@@ -215,26 +215,26 @@ Do NOT use filesystem paths like `C:\Projects\MyGame\Content\UI` - use the virtu
 
 **Comprehensive (slowest):**
 ```bash
-python index.py --all --plugins --embed --source
+python index.py --plugins --embed --source
 ```
 Full coverage: all assets, all plugins, vector embeddings for semantic search, and C++ source.
-If embedding dependencies are unavailable, use `--all --plugins --source` (FTS-only search still works well).
+If embedding dependencies are unavailable, use `--plugins --source` (FTS-only search still works well).
 
 **Standard (recommended for most projects):**
 ```bash
-python index.py --all
+python index.py
 ```
 Full coverage without embeddings. FTS5 full-text search works well for most queries.
 
 **Plugin-inclusive (slower):**
 ```bash
-python index.py --all --plugins
+python index.py --plugins
 ```
 Use this when you need plugin content indexed (especially Game Feature plugins). For large plugin-heavy projects this can take significantly longer.
 
 **Quick (fastest):**
 ```bash
-python index.py --quick --plugins
+python index.py --profile quick --plugins
 ```
 Just the high-value types you search most often.
 
@@ -242,10 +242,10 @@ Just the high-value types you search most often.
 
 ```bash
 # Rebuild just UI assets
-python index.py --all --path UI --force
+python index.py --path UI --force
 
 # Rebuild just blueprints folder
-python index.py --all --path Blueprints --force
+python index.py --path Blueprints --force
 
 # Rebuild C++ source only
 python index.py --source --force
@@ -257,8 +257,8 @@ The `--force` flag bypasses the fingerprint cache that normally skips unchanged 
 
 ### Wrapper Scripts
 ```bash
-.\index.bat --all    # Windows
-./index.sh --all     # macOS/Linux
+.\index.bat          # Windows
+./index.sh           # macOS/Linux
 ```
 
 ## Manual Setup
@@ -276,7 +276,7 @@ cd Tools/AssetParser && dotnet build -c Release
 cd Tools/UnrealAgent && pip install -r requirements.txt
 
 # Build index
-cd Tools && python index.py --all
+cd Tools && python index.py
 ```
 
 ## Multi-Project Setup
@@ -297,7 +297,7 @@ python index.py list
 python index.py use lyra
 
 # Index a specific project without switching
-python index.py --all --project shootergame
+python index.py --project shootergame
 ```
 
 ### Per-Project Databases
@@ -337,7 +337,7 @@ For project-specific types (custom DataAsset subclasses, experience definitions,
 
 ```bash
 # 1. Index with defaults first
-python index.py --all --plugins
+python index.py --plugins
 
 # 2. Create a profile based on what you find
 #    See AGENT_PROFILE_GUIDE.md for field reference
@@ -347,7 +347,7 @@ cp UnrealAgent/profiles/_defaults.json UnrealAgent/profiles/mygame.json
 # 3. Link it in config.json (add "profile": "mygame" to your project entry)
 
 # 4. Re-index with the profile
-python index.py --all --plugins --force
+python index.py --plugins --force
 ```
 
 Profiles live in `UnrealAgent/profiles/`. See:

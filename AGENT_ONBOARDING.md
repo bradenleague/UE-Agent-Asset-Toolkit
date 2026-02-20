@@ -32,7 +32,7 @@ python index.py add "/path/to/MyGame/MyGame.uproject" --name mygame
 Run the first index **without a profile**. This uses engine defaults only, which is enough to classify most standard UE asset types and discover what's project-specific.
 
 ```bash
-python index.py --all --plugins
+python index.py --plugins
 ```
 
 This will:
@@ -173,7 +173,7 @@ Then link it in `config.json`:
 
 ```bash
 # Force re-index to apply the new profile
-python index.py --all --plugins --force
+python index.py --plugins --force
 ```
 
 The profile changes how assets are classified and which get semantic extraction. Force is needed to re-process already-indexed assets.
@@ -234,7 +234,7 @@ For better semantic search quality:
 
 ```bash
 pip install sentence-transformers
-python index.py --all --plugins --embed --force
+python index.py --plugins --embed --force
 ```
 
 ### Index C++ Source
@@ -252,9 +252,9 @@ This indexes `UCLASS`, `UPROPERTY`, `UFUNCTION` macros from `Source/` and plugin
 | `python index.py add <path>` | Register project |
 | `python index.py list` | Show all projects |
 | `python index.py use <name>` | Switch active project |
-| `python index.py --all --plugins` | Full index with plugins |
-| `python index.py --all --plugins --force` | Re-index everything |
-| `python index.py --quick` | Index high-value types only |
+| `python index.py --plugins` | Full index with plugins |
+| `python index.py --plugins --force` | Re-index everything |
+| `python index.py --profile quick` | Index high-value types only |
 | `python index.py --status` | Show index stats |
 | `python index.py --source` | Index C++ source |
 

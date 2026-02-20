@@ -339,10 +339,10 @@ Start with this minimal template. After an initial index, use the discovery quer
 
 ## Iterative Workflow
 
-1. **Index with defaults** → `python index.py --all --plugins`
+1. **Index with defaults** → `python index.py --plugins`
 2. **Analyze** → Run discovery queries from [AGENT_ONBOARDING.md](AGENT_ONBOARDING.md) Phase 3
 3. **Create profile** → Fill in `export_class_reclassify` and `name_prefixes` first
-4. **Re-index** → `python index.py --all --plugins --force`
+4. **Re-index** → `python index.py --plugins --force`
 5. **Validate** → Check Unknown count decreased, semantic docs increased
 6. **Refine** → Add `game_feature_types`, `deep_ref_*`, `widget_*` based on results
 7. **Re-index** → Repeat until coverage is satisfactory

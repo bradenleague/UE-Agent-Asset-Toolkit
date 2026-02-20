@@ -71,7 +71,7 @@ Present the results and let the user pick.
 ### 4. Run Initial Index
 
 ```bash
-python index.py --all --plugins
+python index.py --plugins
 ```
 
 This indexes all assets with engine defaults. The `--plugins` flag includes Game Feature plugin content. For large projects this takes a few minutes.
@@ -79,7 +79,7 @@ This indexes all assets with engine defaults. The `--plugins` flag includes Game
 If the user only cares about a specific area (e.g., "I'm working on the UI system"), consider a targeted index instead:
 
 ```bash
-python index.py --all --path UI --plugins
+python index.py --path UI --plugins
 ```
 
 ### 5. Check Results
@@ -146,7 +146,7 @@ GROUP BY prefix HAVING cnt >= 3 ORDER BY cnt DESC LIMIT 20;
 Use the results to create `UnrealAgent/profiles/<project_name>.json`. Start from the template in AGENT_PROFILE_GUIDE.md. Then add `"profile": "<project_name>"` to the project entry in `UnrealAgent/config.json` and re-index:
 
 ```bash
-python index.py --all --plugins --force
+python index.py --plugins --force
 ```
 
 ## Build Commands
@@ -164,12 +164,12 @@ python index.py --all --plugins --force
 | `python index.py add <path>` | Register a `.uproject` and set it active |
 | `python index.py use <name>` | Switch active project |
 | `python index.py list` | Show all configured projects |
-| `python index.py --all --plugins` | Full index with plugin content |
-| `python index.py --all --plugins --force` | Re-index everything (after profile changes) |
-| `python index.py --quick --plugins` | Fast index of high-value types only |
+| `python index.py --plugins` | Full index with plugin content |
+| `python index.py --plugins --force` | Re-index everything (after profile changes) |
+| `python index.py --profile quick --plugins` | Fast index of high-value types only |
 | `python index.py --source` | Index C++ source files |
 | `python index.py --status` | Show index statistics |
-| `python index.py --all --embed` | Index with vector embeddings (needs `sentence-transformers`) |
+| `python index.py --embed` | Index with vector embeddings (needs `sentence-transformers`) |
 
 ## Testing
 
