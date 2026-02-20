@@ -339,6 +339,64 @@ def get_project_db_path(project_name: str = None) -> str:
     return os.path.join(_TOOL_DIR, "data", f"{project_name}.db")
 
 
+def get_project_index_options(project_name: str = None) -> dict:
+    """Read saved index_options for a project from config.json.
+
+    Args:
+        project_name: Project name, or None for active project.
+
+    Returns:
+        Dict of saved options, or {} if none saved.
+    """
+    if not os.path.exists(CONFIG_FILE):
+        return {}
+
+    if not project_name:
+        project_name = get_active_project_name()
+    if not project_name:
+        return {}
+
+    with open(CONFIG_FILE, "r") as f:
+        config = json.load(f)
+
+    proj = config.get("projects", {}).get(project_name, {})
+    return proj.get("index_options", {})
+
+
+def set_project_index_options(options: dict, project_name: str = None):
+    """Merge index_options into a project's config entry.
+
+    Args:
+        options: Dict of options to merge (keys with None values are removed).
+        project_name: Project name, or None for active project.
+    """
+    if not os.path.exists(CONFIG_FILE):
+        return
+
+    if not project_name:
+        project_name = get_active_project_name()
+    if not project_name:
+        return
+
+    with open(CONFIG_FILE, "r") as f:
+        config = json.load(f)
+
+    proj = config.get("projects", {}).get(project_name)
+    if proj is None:
+        return
+
+    existing = proj.get("index_options", {})
+    for k, v in options.items():
+        if v is None:
+            existing.pop(k, None)
+        else:
+            existing[k] = v
+    proj["index_options"] = existing
+
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
+
+
 # Plugin mount points cache: mount_point -> content_path
 # e.g., {"ShooterCore": "C:/Project/Plugins/GameFeatures/ShooterCore/Content"}
 _plugin_paths: dict[str, str] = {}
@@ -641,7 +699,7 @@ def _list_assets_filesystem(
         if not any(asset.get("class") for asset in paginated_result["assets"]):
             paginated_result["hint"] += (
                 " Asset class values may be null before indexing; "
-                "run `python index.py --all` to populate detailed type metadata."
+                "run `python index.py` to populate detailed type metadata."
             )
     if parser_calls >= MAX_PARSER_CALLS:
         paginated_result["note"] = (
@@ -1069,8 +1127,8 @@ if __name__ == "__main__":
         print("  python tools.py --list                # List configured projects")
         print()
         print("For indexing, use index.py from the repo root:")
-        print("  python index.py --all                 # Full hybrid index")
-        print("  python index.py --quick               # High-value types only")
+        print("  python index.py                       # Run with saved/default profile")
+        print("  python index.py --profile quick       # High-value types only")
         print("  python index.py --source              # Index C++ source files")
         print()
         print("Examples:")

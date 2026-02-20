@@ -4,7 +4,7 @@ Two tools:
   - unreal_search: Find assets, code, concepts via semantic/fuzzy/exact search
   - inspect_asset: Get detailed structured data about a specific asset
 
-Requires: Build the index first with `python index.py --all`
+Requires: Build the index first with `python index.py`
 
 Usage:
     # Run directly (stdio transport)
@@ -70,7 +70,7 @@ def _get_store():
             project = get_active_project_name() or "unknown"
             raise RuntimeError(
                 f"Knowledge index not found for project '{project}' at {db_path}. "
-                "Run 'python index.py --all' first."
+                "Run 'python index.py' first."
             )
         from knowledge_index import KnowledgeStore
 
@@ -1963,7 +1963,7 @@ async def main():
             print(f"Warning: {e}", file=sys.stderr)
     else:
         print(
-            "Warning: No index found. Run 'python index.py --all' first.",
+            "Warning: No index found. Run 'python index.py' first.",
             file=sys.stderr,
         )
 

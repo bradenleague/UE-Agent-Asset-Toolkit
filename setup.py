@@ -257,7 +257,7 @@ Note: Quote paths containing spaces!
 
         if not project_path:
             print("WARNING: No project specified, skipping index build")
-            print("     Run: python index.py --all")
+            print("     Run: python index.py")
         else:
             print("     This may take a while for large projects...")
             result = run_command(
@@ -267,7 +267,7 @@ Note: Quote paths containing spaces!
             )
             if result.returncode != 0:
                 print("WARNING: Index build had issues, you can retry with:")
-                print("     python index.py --all")
+                print("     python index.py")
             else:
                 print("     Semantic index built")
         print()
@@ -298,7 +298,7 @@ Note: Quote paths containing spaces!
 
     if not args.index and project_path:
         print("Build semantic index (enables natural language search):")
-        print("  python index.py --all")
+        print("  python index.py")
         print()
 
 
