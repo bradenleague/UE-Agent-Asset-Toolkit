@@ -797,7 +797,7 @@ def inspect_asset(
 
     # Deep Blueprint analysis modes
     if detail == "graph":
-        return _run_asset_parser("graph-json", file_path)
+        return _run_asset_parser("graph", file_path)
     if not summarize:
         return _run_asset_parser("inspect", file_path)
 
@@ -1001,7 +1001,7 @@ def inspect_blueprint_graph(asset_path: str) -> str:
     Use this to understand how a Blueprint's logic is wired together.
     """
     file_path = _asset_path_to_file(asset_path)
-    return _run_asset_parser("graph-json", file_path)
+    return _run_asset_parser("graph", file_path)
 
 
 def inspect_material(asset_path: str) -> str:
@@ -1127,7 +1127,9 @@ if __name__ == "__main__":
         print("  python tools.py --list                # List configured projects")
         print()
         print("For indexing, use index.py from the repo root:")
-        print("  python index.py                       # Run with saved/default profile")
+        print(
+            "  python index.py                       # Run with saved/default profile"
+        )
         print("  python index.py --profile quick       # High-value types only")
         print("  python index.py --source              # Index C++ source files")
         print()
@@ -1228,10 +1230,13 @@ if __name__ == "__main__":
         print()
 
         from project_profile import load_profile
+
         store = KnowledgeStore(db_path)
         project_profile = load_profile(emit_info=False)
         if project_profile.profile_name == "_defaults":
-            print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+            print(
+                "INFO: Using engine defaults. Profile not required for standard UE projects."
+            )
             print()
         indexer = AssetIndexer(store, content_path, profile=project_profile)
 
@@ -1426,10 +1431,13 @@ if __name__ == "__main__":
             )
 
         from project_profile import load_profile
+
         store = KnowledgeStore(db_path)
         project_profile = load_profile(emit_info=False)
         if project_profile.profile_name == "_defaults":
-            print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+            print(
+                "INFO: Using engine defaults. Profile not required for standard UE projects."
+            )
             print()
         indexer = AssetIndexer(
             store,
@@ -1769,9 +1777,12 @@ if __name__ == "__main__":
         if content_path.exists():
             print("Indexing assets...")
             from project_profile import load_profile
+
             project_profile = load_profile(emit_info=False)
             if project_profile.profile_name == "_defaults":
-                print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+                print(
+                    "INFO: Using engine defaults. Profile not required for standard UE projects."
+                )
             asset_indexer = AssetIndexer(store, content_path, profile=project_profile)
             asset_stats = asset_indexer.index_folder(
                 "/Game", progress_callback=progress
