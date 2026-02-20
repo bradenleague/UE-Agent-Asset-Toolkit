@@ -68,8 +68,47 @@ def test_mcp_semantic_mode_passes_query_type_hint(monkeypatch):
     )
 
     result = mcp_server.unreal_search(
-        query="player damage", search_type="semantic", limit=5
+        query="player damage system", search_type="semantic", limit=5
     )
 
     assert result["search_type"] == "semantic"
     assert dummy_retriever.kwargs["query_type"] == "semantic"
+
+
+def test_mcp_short_keyword_semantic_mode_uses_exact_query_type(monkeypatch):
+    class _DummyRetriever:
+        def __init__(self):
+            self.kwargs = None
+
+        def retrieve(self, **kwargs):
+            self.kwargs = kwargs
+            doc = DocChunk(
+                doc_id="asset:/Game/Test/BP_Player",
+                type="asset_summary",
+                path="/Game/Test/BP_Player",
+                name="BP_Player",
+                text="Player blueprint",
+                asset_type="Blueprint",
+            )
+            return _DummyBundle([SearchResult(doc_id=doc.doc_id, score=0.9, doc=doc)])
+
+    dummy_retriever = _DummyRetriever()
+
+    monkeypatch.setattr(mcp_server, "_get_store", lambda: _DummyStore())
+    monkeypatch.setattr(
+        mcp_server,
+        "_get_retriever",
+        lambda enable_embeddings=False: dummy_retriever,
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "_enrich_results_with_full_docs",
+        lambda results, store: "summary",
+    )
+
+    result = mcp_server.unreal_search(
+        query="player damage", search_type="semantic", limit=5
+    )
+
+    assert result["search_type"] == "semantic"
+    assert dummy_retriever.kwargs["query_type"] == "exact"

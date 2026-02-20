@@ -100,6 +100,7 @@ class HybridRetriever:
         filters: dict = None,
         k: int = 10,
         query_type: str | None = None,
+        allow_semantic_fallback: bool = True,
         expand_refs: bool = False,
         ref_direction: str = "both",
         ref_depth: int = 1,
@@ -114,6 +115,7 @@ class HybridRetriever:
             k: Number of results to return
             query_type: Optional hint: "exact", "semantic", or "hybrid".
                 If omitted, query type is auto-classified.
+            allow_semantic_fallback: Whether exact queries can fall back to semantic.
             expand_refs: Whether to expand reference graph
             ref_direction: "forward", "reverse", or "both"
             ref_depth: Depth for reference expansion
@@ -131,7 +133,7 @@ class HybridRetriever:
         if query_type == "exact":
             # Exact search first, then semantic fallback
             results = self.search_exact(query, filters, k)
-            if len(results) < k // 2 and self.embed_fn:
+            if allow_semantic_fallback and len(results) < k // 2 and self.embed_fn:
                 semantic_results = self.search_semantic(
                     query, filters, k - len(results)
                 )

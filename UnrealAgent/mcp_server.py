@@ -1447,22 +1447,17 @@ def unreal_search(
             for w in ["how", "what", "why", "where", "when", "which", "explain"]
         )
 
-        if is_short_keyword_query:
-            retriever = _get_retriever(enable_embeddings=False)
-            semantic_results = retriever.search_exact(
-                query, filters=type_filters, k=limit
-            )
-        else:
-            retriever = _get_retriever(enable_embeddings=True)
-            # Preserve explicit semantic mode when caller selected it.
-            semantic_query_type = "semantic"
-            bundle = retriever.retrieve(
-                query=query,
-                filters=type_filters,
-                k=limit,
-                query_type=semantic_query_type,
-            )
-            semantic_results = bundle.results
+        retriever = _get_retriever(enable_embeddings=not is_short_keyword_query)
+        # Route short keyword queries through exact search to avoid truncation.
+        semantic_query_type = "exact" if is_short_keyword_query else "semantic"
+        bundle = retriever.retrieve(
+            query=query,
+            filters=type_filters,
+            k=limit,
+            query_type=semantic_query_type,
+            allow_semantic_fallback=not is_short_keyword_query,
+        )
+        semantic_results = bundle.results
 
         for r in semantic_results[:limit]:
             if r.doc:
