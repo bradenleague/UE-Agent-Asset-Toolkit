@@ -1,6 +1,7 @@
 """Regression tests for explicit query routing between mcp_server and retriever."""
 
 from UnrealAgent import mcp_server
+from search import engine as search_engine
 from UnrealAgent.knowledge_index.retriever import HybridRetriever
 from UnrealAgent.knowledge_index.schemas import DocChunk, SearchResult
 
@@ -55,15 +56,15 @@ def test_mcp_semantic_mode_passes_query_type_hint(monkeypatch):
 
     dummy_retriever = _DummyRetriever()
 
-    monkeypatch.setattr(mcp_server, "_get_store", lambda: _DummyStore())
+    monkeypatch.setattr(search_engine, "get_store", lambda: _DummyStore())
     monkeypatch.setattr(
-        mcp_server,
-        "_get_retriever",
+        search_engine,
+        "get_retriever_instance",
         lambda enable_embeddings=False: dummy_retriever,
     )
     monkeypatch.setattr(
-        mcp_server,
-        "_enrich_results_with_full_docs",
+        search_engine,
+        "enrich_results_with_full_docs",
         lambda results, store: "summary",
     )
 
@@ -94,15 +95,15 @@ def test_mcp_short_keyword_semantic_mode_uses_exact_query_type(monkeypatch):
 
     dummy_retriever = _DummyRetriever()
 
-    monkeypatch.setattr(mcp_server, "_get_store", lambda: _DummyStore())
+    monkeypatch.setattr(search_engine, "get_store", lambda: _DummyStore())
     monkeypatch.setattr(
-        mcp_server,
-        "_get_retriever",
+        search_engine,
+        "get_retriever_instance",
         lambda enable_embeddings=False: dummy_retriever,
     )
     monkeypatch.setattr(
-        mcp_server,
-        "_enrich_results_with_full_docs",
+        search_engine,
+        "enrich_results_with_full_docs",
         lambda results, store: "summary",
     )
 

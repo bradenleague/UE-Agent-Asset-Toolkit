@@ -537,9 +537,10 @@ class TestInheritsQueryPrefixHandling:
     def test_unreal_search_normalizes_embedded_class_prefix(self, tmp_store, monkeypatch):
         """Natural-language inherits query with class: token should find children."""
         from UnrealAgent import mcp_server
+        from search import engine as search_engine
 
         self._setup_inheritance_tree(tmp_store)
-        monkeypatch.setattr(mcp_server, "_get_store", lambda: tmp_store)
+        monkeypatch.setattr(search_engine, "get_store", lambda: tmp_store)
 
         result = mcp_server.unreal_search(
             "inherits from class:GameplayEffect", search_type="inherits", limit=10
@@ -551,9 +552,10 @@ class TestInheritsQueryPrefixHandling:
     def test_unreal_search_script_target_uses_class_segment(self, tmp_store, monkeypatch):
         """Inherits query with /Script/Module.Class should use the class segment."""
         from UnrealAgent import mcp_server
+        from search import engine as search_engine
 
         self._setup_inheritance_tree(tmp_store)
-        monkeypatch.setattr(mcp_server, "_get_store", lambda: tmp_store)
+        monkeypatch.setattr(search_engine, "get_store", lambda: tmp_store)
 
         result = mcp_server.unreal_search(
             "children of /Script/GameplayAbilities.GameplayEffect",
