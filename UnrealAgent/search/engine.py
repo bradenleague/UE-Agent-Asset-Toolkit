@@ -421,17 +421,15 @@ def unreal_search(
         ):
             cpp_info = store.resolve_cpp_source(query)
             if cpp_info:
-                doc = store.get_doc(cpp_info["doc_id"])
-                if doc:
-                    results.append(
-                        {
-                            "path": doc.path,
-                            "name": doc.name,
-                            "type": doc.asset_type or doc.type,
-                            "snippet": doc.text[:200] if doc.text else "",
-                            "score": 1.0,
-                        }
-                    )
+                results.append(
+                    {
+                        "path": cpp_info["source_path"],
+                        "name": cpp_info["class_name"],
+                        "type": "CppClass",
+                        "snippet": "",
+                        "score": 1.0,
+                    }
+                )
 
     else:
         query_words = query.strip().split()

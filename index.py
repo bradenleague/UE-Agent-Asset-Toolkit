@@ -8,7 +8,7 @@ Usage:
     python index.py                         Run index using saved/default profile
     python index.py --profile hybrid        Full hybrid index
     python index.py --profile quick         High-value types only
-    python index.py --source                Index C++ source files
+    python index.py --source                Scan C++ headers for class index
     python index.py --status                Show detailed statistics
 
     python index.py add <path>              Add project + set active
@@ -17,6 +17,7 @@ Usage:
 
     python index.py --project lyra          Index specific project
 """
+
 import argparse
 import os
 import sys
@@ -52,7 +53,7 @@ def cmd_add(args):
     import tools
 
     project_path = args.path
-    if not project_path.endswith('.uproject'):
+    if not project_path.endswith(".uproject"):
         print(f"ERROR: Expected .uproject file, got: {project_path}")
         sys.exit(1)
 
@@ -75,7 +76,7 @@ def cmd_add(args):
     print(f"  Engine: {result['engine_path']}")
     print()
     print("Next: Build the index with:")
-    print(f"  python index.py")
+    print("  python index.py")
 
 
 def cmd_use(args):
@@ -90,12 +91,15 @@ def cmd_use(args):
         db_path = Path(tools.get_project_db_path(args.name))
         if db_path.exists():
             from knowledge_index import KnowledgeStore
+
             store = KnowledgeStore(db_path)
             status = store.get_status()
-            print(f"  Index: {status.total_docs} docs, {status.lightweight_total} lightweight")
+            print(
+                f"  Index: {status.total_docs} docs, {status.lightweight_total} lightweight"
+            )
         else:
-            print(f"  Index: Not built yet")
-            print(f"  Run: python index.py")
+            print("  Index: Not built yet")
+            print("  Run: python index.py")
 
     except ValueError as e:
         print(f"ERROR: {e}")
@@ -128,13 +132,16 @@ def cmd_list(args):
         if db_path.exists():
             try:
                 from knowledge_index import KnowledgeStore
+
                 store = KnowledgeStore(db_path)
                 status = store.get_status()
-                print(f"    Index: {status.total_docs} docs, {status.lightweight_total} lightweight")
+                print(
+                    f"    Index: {status.total_docs} docs, {status.lightweight_total} lightweight"
+                )
             except:
                 print(f"    Index: {db_path.name}")
         else:
-            print(f"    Index: Not built")
+            print("    Index: Not built")
         print()
 
     print(f"Active: {active or '(none)'}")
@@ -160,6 +167,7 @@ def cmd_status(args):
         return
 
     from knowledge_index import KnowledgeStore
+
     store = KnowledgeStore(db_path)
     status = store.get_status()
 
@@ -179,12 +187,14 @@ def cmd_status(args):
     for doc_type, count in sorted(status.docs_by_type.items()):
         print(f"  {doc_type}: {count}")
 
-    if hasattr(status, 'lightweight_total') and status.lightweight_total > 0:
+    if hasattr(status, "lightweight_total") and status.lightweight_total > 0:
         print()
         print("Lightweight Assets (path + refs only):")
         print(f"  Total: {status.lightweight_total}")
-        if hasattr(status, 'lightweight_by_type') and status.lightweight_by_type:
-            for asset_type, count in sorted(status.lightweight_by_type.items(), key=lambda x: -x[1])[:10]:
+        if hasattr(status, "lightweight_by_type") and status.lightweight_by_type:
+            for asset_type, count in sorted(
+                status.lightweight_by_type.items(), key=lambda x: -x[1]
+            )[:10]:
                 print(f"    {asset_type}: {count}")
 
 
@@ -223,7 +233,9 @@ def cmd_rebuild_fts(args):
 
         # Verify integrity
         print("Verifying FTS5 integrity...")
-        result = conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('integrity-check')").fetchall()
+        result = conn.execute(
+            "INSERT INTO docs_fts(docs_fts) VALUES('integrity-check')"
+        ).fetchall()
         print("Integrity check passed!")
 
     except Exception as e:
@@ -245,19 +257,19 @@ def _resolve_index_options(args):
 
     # Profile resolution:
     # --profile > saved default > "hybrid"
-    cli_profile = getattr(args, 'profile', None)
+    cli_profile = getattr(args, "profile", None)
     if cli_profile in {"hybrid", "quick"}:
         profile = cli_profile
     else:
         profile = saved_opts.get("default_profile", "hybrid")
 
     # --plugins: CLI explicit > saved config > False
-    include_plugins = getattr(args, 'plugins', False)
+    include_plugins = getattr(args, "plugins", False)
     if not include_plugins:
         include_plugins = saved_opts.get("include_plugins", False)
 
     # --batch-size: CLI explicit (non-None) > saved config > env > 500
-    cli_batch_size = getattr(args, 'batch_size', None)
+    cli_batch_size = getattr(args, "batch_size", None)
     if cli_batch_size is not None:
         batch_size = max(1, min(2000, cli_batch_size))
     elif "batch_size" in saved_opts:
@@ -267,19 +279,19 @@ def _resolve_index_options(args):
             1, min(2000, int(os.environ.get("UE_INDEX_BATCH_SIZE", "500")))
         )
 
-    max_assets = getattr(args, 'max_assets', None)
+    max_assets = getattr(args, "max_assets", None)
     if max_assets is not None:
         max_assets = max(1, max_assets)
 
     # --max-batch-memory: set env var so indexer's _get_available_memory_mb() picks it up
-    max_batch_memory = getattr(args, 'max_batch_memory', None)
+    max_batch_memory = getattr(args, "max_batch_memory", None)
     if max_batch_memory is not None:
         os.environ["UE_INDEX_MAX_BATCH_MEMORY"] = str(max(1, max_batch_memory))
 
-    recursive = not getattr(args, 'non_recursive', False)
+    recursive = not getattr(args, "non_recursive", False)
 
     # --path with Windows shell cleanup
-    index_path = getattr(args, 'path', None) or "/Game"
+    index_path = getattr(args, "path", None) or "/Game"
     if ":" in index_path or "Program Files" in index_path:
         if "/Game/" in index_path:
             index_path = "/Game/" + index_path.split("/Game/")[-1]
@@ -290,7 +302,7 @@ def _resolve_index_options(args):
 
     # OFPA exclusion: CLI --no-ofpa > saved config > off
     _default_ofpa = ["__ExternalActors__", "__ExternalObjects__"]
-    cli_no_ofpa = getattr(args, 'no_ofpa', False)
+    cli_no_ofpa = getattr(args, "no_ofpa", False)
     saved_exclude = saved_opts.get("exclude_paths")
     exclude_patterns = None
     if cli_no_ofpa:
@@ -301,13 +313,17 @@ def _resolve_index_options(args):
         exclude_patterns = saved_exclude
 
     # Type filter (quick uses type subset, hybrid does not)
-    quick_profile = getattr(args, 'quick_profile', "default")
-    custom_types_arg = getattr(args, 'types', None)
+    quick_profile = getattr(args, "quick_profile", "default")
+    custom_types_arg = getattr(args, "types", None)
     if profile == "quick":
         if custom_types_arg:
-            selected_types = [t.strip() for t in custom_types_arg.split(",") if t.strip()]
+            selected_types = [
+                t.strip() for t in custom_types_arg.split(",") if t.strip()
+            ]
         else:
-            selected_types = QUICK_TYPE_PROFILES.get(quick_profile, QUICK_TYPE_PROFILES["default"])
+            selected_types = QUICK_TYPE_PROFILES.get(
+                quick_profile, QUICK_TYPE_PROFILES["default"]
+            )
     else:
         selected_types = None
 
@@ -333,8 +349,8 @@ def cmd_index(args):
 
     # Open log file if requested (writes newline-delimited progress unconditionally)
     log_fh = None
-    if getattr(args, 'log_file', None):
-        log_fh = open(args.log_file, 'w')
+    if getattr(args, "log_file", None):
+        log_fh = open(args.log_file, "w")
 
     # Handle --project override
     if args.project:
@@ -355,13 +371,18 @@ def cmd_index(args):
     print(f"Database: {tools.get_project_db_path()}")
     print()
 
-    # Handle --source separately
+    # Handle --source: scan C++ headers for class index (lightweight, no docs)
     if args.source:
-        sys.argv = ["tools.py", "--index-source"]
-        # exec needs explicit namespace so functions can find module-level globals
-        tools_path = str(UNREAL_AGENT_DIR / "tools.py")
-        namespace = {"__name__": "__main__", "__file__": tools_path}
-        exec(open(tools_path, encoding="utf-8").read(), namespace)
+        project_root = Path(os.path.dirname(tools.PROJECT))
+        db_path = Path(tools.get_project_db_path())
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        from knowledge_index import KnowledgeStore
+
+        store = KnowledgeStore(db_path)
+        print("Scanning C++ headers for class index...")
+        count = store.scan_cpp_classes(project_root)
+        print(f"  Found {count} C++ classes/structs")
         return
 
     # Resolve all index options (shared with cmd_dry_run)
@@ -377,18 +398,18 @@ def cmd_index(args):
     selected_types = opts["selected_types"]
     quick_profile = opts["quick_profile"]
 
-    use_embeddings = getattr(args, 'embed', False)
-    force_reindex = getattr(args, 'force', False)
-    custom_types_arg = getattr(args, 'types', None)
+    use_embeddings = getattr(args, "embed", False)
+    force_reindex = getattr(args, "force", False)
+    custom_types_arg = getattr(args, "types", None)
 
-    parser_parallelism = getattr(args, 'parser_parallelism', None)
+    parser_parallelism = getattr(args, "parser_parallelism", None)
     if parser_parallelism is not None:
         parser_parallelism = max(1, parser_parallelism)
         os.environ["UE_ASSETPARSER_MAX_PARALLELISM"] = str(parser_parallelism)
-    batch_timeout = getattr(args, 'batch_timeout', None)
+    batch_timeout = getattr(args, "batch_timeout", None)
     if batch_timeout is not None:
         os.environ["UE_INDEX_BATCH_TIMEOUT"] = str(max(1, batch_timeout))
-    asset_timeout = getattr(args, 'asset_timeout', None)
+    asset_timeout = getattr(args, "asset_timeout", None)
     if asset_timeout is not None:
         os.environ["UE_INDEX_ASSET_TIMEOUT"] = str(max(1, asset_timeout))
 
@@ -429,17 +450,23 @@ def cmd_index(args):
     print(f"Batch size: {batch_size}")
     print(f"Batch timeout: {os.environ.get('UE_INDEX_BATCH_TIMEOUT', '600')}s")
     print(f"Asset timeout: {os.environ.get('UE_INDEX_ASSET_TIMEOUT', '60')}s")
-    print(f"Parser parallelism: {os.environ.get('UE_ASSETPARSER_MAX_PARALLELISM', 'auto')}")
+    print(
+        f"Parser parallelism: {os.environ.get('UE_ASSETPARSER_MAX_PARALLELISM', 'auto')}"
+    )
     if not recursive:
         print("Recursive: disabled (current folder only)")
     if max_assets is not None:
         print(f"Asset cap: {max_assets}")
     if profile == "quick":
         if custom_types_arg:
-            selected_types = [t.strip() for t in custom_types_arg.split(",") if t.strip()]
+            selected_types = [
+                t.strip() for t in custom_types_arg.split(",") if t.strip()
+            ]
             print(f"Quick types (custom): {', '.join(selected_types)}")
         else:
-            selected_types = QUICK_TYPE_PROFILES.get(quick_profile, QUICK_TYPE_PROFILES["default"])
+            selected_types = QUICK_TYPE_PROFILES.get(
+                quick_profile, QUICK_TYPE_PROFILES["default"]
+            )
             print(f"Quick profile: {quick_profile}")
             print(f"Quick types: {', '.join(selected_types)}")
     else:
@@ -447,13 +474,16 @@ def cmd_index(args):
     if index_path != "/Game":
         print(f"Path filter: {index_path}")
     if force_reindex:
-        print(f"Force: enabled (will re-index all)")
+        print("Force: enabled (will re-index all)")
     print()
 
     from project_profile import load_profile
+
     project_profile = load_profile(emit_info=False)
     if project_profile.profile_name == "_defaults":
-        print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+        print(
+            "INFO: Using engine defaults. Profile not required for standard UE projects."
+        )
         print()
 
     # Set up embeddings if requested
@@ -463,6 +493,7 @@ def cmd_index(args):
         print("Loading sentence-transformers for embeddings...")
         try:
             from knowledge_index.indexer import create_sentence_transformer_embedder
+
             embed_fn = create_sentence_transformer_embedder()
             embed_model = "all-MiniLM-L6-v2"
             print(f"  Model: {embed_model}")
@@ -475,8 +506,11 @@ def cmd_index(args):
 
     store = KnowledgeStore(db_path)
     indexer = AssetIndexer(
-        store, content_path,
-        embed_fn=embed_fn, embed_model=embed_model, force=force_reindex,
+        store,
+        content_path,
+        embed_fn=embed_fn,
+        embed_model=embed_model,
+        force=force_reindex,
         plugin_paths=plugin_paths if plugin_paths else None,
         profile=project_profile,
     )
@@ -488,11 +522,11 @@ def cmd_index(args):
     _is_tty = sys.stdout.isatty()
 
     progress_state = {
-        'start_time': None,
-        'phase_start': None,
-        'last_phase': '',
-        'last_total': 0,
-        'last_nontty_pct': -1,  # track last reported % for non-TTY mode
+        "start_time": None,
+        "phase_start": None,
+        "last_phase": "",
+        "last_total": 0,
+        "last_nontty_pct": -1,  # track last reported % for non-TTY mode
     }
 
     def format_duration(seconds):
@@ -510,38 +544,46 @@ def cmd_index(args):
         now = time_module.time()
 
         # Extract phase name, stripping batch numbers and normalizing
-        raw_phase = status_msg.split(':')[0] if ':' in status_msg else status_msg
-        phase = re.sub(r' batch \d+$', '', raw_phase)
-        phase = re.sub(r' \d+$', '', phase)  # Also strip trailing numbers like "Batch Blueprint 1"
+        raw_phase = status_msg.split(":")[0] if ":" in status_msg else status_msg
+        phase = re.sub(r" batch \d+$", "", raw_phase)
+        phase = re.sub(
+            r" \d+$", "", phase
+        )  # Also strip trailing numbers like "Batch Blueprint 1"
 
         # Initialize start time
-        if progress_state['start_time'] is None:
-            progress_state['start_time'] = now
+        if progress_state["start_time"] is None:
+            progress_state["start_time"] = now
 
         # Phase transition - print completion of previous phase
-        if phase != progress_state['last_phase']:
-            if progress_state['last_phase']:
-                prev_duration = format_duration(now - progress_state['phase_start'])
-                prev_total = progress_state['last_total']
+        if phase != progress_state["last_phase"]:
+            if progress_state["last_phase"]:
+                prev_duration = format_duration(now - progress_state["phase_start"])
+                prev_total = progress_state["last_total"]
                 if _is_tty:
-                    sys.stdout.write(f"\r[{timestamp()}] {progress_state['last_phase']}: {prev_total:,} done ({prev_duration})" + " " * 20 + "\n")
+                    sys.stdout.write(
+                        f"\r[{timestamp()}] {progress_state['last_phase']}: {prev_total:,} done ({prev_duration})"
+                        + " " * 20
+                        + "\n"
+                    )
                 else:
-                    sys.stdout.write(f"[{timestamp()}] {progress_state['last_phase']}: {prev_total:,} done ({prev_duration})\n")
+                    sys.stdout.write(
+                        f"[{timestamp()}] {progress_state['last_phase']}: {prev_total:,} done ({prev_duration})\n"
+                    )
                 sys.stdout.flush()
 
             # Start new phase
-            progress_state['phase_start'] = now
-            progress_state['last_phase'] = phase
-            progress_state['last_total'] = 0
-            progress_state['last_nontty_pct'] = -1
+            progress_state["phase_start"] = now
+            progress_state["last_phase"] = phase
+            progress_state["last_total"] = 0
+            progress_state["last_nontty_pct"] = -1
 
         # Update progress on same line (will be overwritten)
-        progress_state['last_total'] = max(progress_state['last_total'], current, total)
+        progress_state["last_total"] = max(progress_state["last_total"], current, total)
 
         if total > 0:
             pct = int(100 * current / total)
             eta_str = ""
-            elapsed = now - progress_state['phase_start']
+            elapsed = now - progress_state["phase_start"]
             if current > 0 and elapsed > 2:
                 rate = current / elapsed
                 remaining = total - current
@@ -549,13 +591,18 @@ def cmd_index(args):
                     eta_str = f" ETA {format_duration(remaining / rate)}"
 
             if _is_tty:
-                sys.stdout.write(f"\r[{timestamp()}] {phase}: {current:,}/{total:,} ({pct}%){eta_str}" + " " * 10)
+                sys.stdout.write(
+                    f"\r[{timestamp()}] {phase}: {current:,}/{total:,} ({pct}%){eta_str}"
+                    + " " * 10
+                )
             else:
                 # Non-TTY: emit at ~10% intervals to avoid flooding
                 pct_bucket = pct // 10 * 10
-                if pct_bucket > progress_state['last_nontty_pct']:
-                    progress_state['last_nontty_pct'] = pct_bucket
-                    sys.stdout.write(f"[{timestamp()}] {phase}: {current:,}/{total:,} ({pct}%){eta_str}\n")
+                if pct_bucket > progress_state["last_nontty_pct"]:
+                    progress_state["last_nontty_pct"] = pct_bucket
+                    sys.stdout.write(
+                        f"[{timestamp()}] {phase}: {current:,}/{total:,} ({pct}%){eta_str}\n"
+                    )
         else:
             if _is_tty:
                 sys.stdout.write(f"\r[{timestamp()}] {phase}..." + " " * 20)
@@ -598,28 +645,40 @@ def cmd_index(args):
 
     # Finalize - print last phase completion
     end_time = time_module.time()
-    if progress_state['last_phase']:
-        prev_duration = format_duration(end_time - progress_state['phase_start'])
-        prev_total = progress_state['last_total']
+    if progress_state["last_phase"]:
+        prev_duration = format_duration(end_time - progress_state["phase_start"])
+        prev_total = progress_state["last_total"]
         if _is_tty:
-            sys.stdout.write(f"\r[{timestamp()}] {progress_state['last_phase']}: {prev_total:,} done ({prev_duration})" + " " * 20 + "\n")
+            sys.stdout.write(
+                f"\r[{timestamp()}] {progress_state['last_phase']}: {prev_total:,} done ({prev_duration})"
+                + " " * 20
+                + "\n"
+            )
         else:
-            sys.stdout.write(f"[{timestamp()}] {progress_state['last_phase']}: {prev_total:,} done ({prev_duration})\n")
+            sys.stdout.write(
+                f"[{timestamp()}] {progress_state['last_phase']}: {prev_total:,} done ({prev_duration})\n"
+            )
 
     # Clean summary
-    total_duration = format_duration(end_time - progress_state['start_time']) if progress_state['start_time'] else "0s"
-    total_found = stats.get('total_found', 0)
-    lightweight = stats.get('lightweight_indexed', 0)
-    semantic = stats.get('semantic_indexed', 0)
-    unchanged = stats.get('unchanged', 0)
-    errors = stats.get('errors', 0)
+    total_duration = (
+        format_duration(end_time - progress_state["start_time"])
+        if progress_state["start_time"]
+        else "0s"
+    )
+    total_found = stats.get("total_found", 0)
+    lightweight = stats.get("lightweight_indexed", 0)
+    semantic = stats.get("semantic_indexed", 0)
+    unchanged = stats.get("unchanged", 0)
+    errors = stats.get("errors", 0)
 
     print()
     print(f"[{timestamp()}] Complete in {total_duration}")
-    print(f"    {total_found:,} assets: {semantic:,} semantic, {lightweight:,} lightweight, {unchanged:,} unchanged, {errors} errors")
+    print(
+        f"    {total_found:,} assets: {semantic:,} semantic, {lightweight:,} lightweight, {unchanged:,} unchanged, {errors} errors"
+    )
 
     # Persist effective options if --save was requested
-    if getattr(args, 'save', False):
+    if getattr(args, "save", False):
         effective_opts = {
             "exclude_paths": exclude_patterns if exclude_patterns else None,
             "include_plugins": include_plugins if include_plugins else None,
@@ -627,7 +686,7 @@ def cmd_index(args):
             "default_profile": profile,
         }
         tools.set_project_index_options(effective_opts)
-        print(f"    Saved index options to config for next run")
+        print("    Saved index options to config for next run")
 
     # Rebuild FTS5 index when marked dirty by docs writes.
     if store.is_fts_dirty():
@@ -698,15 +757,18 @@ def cmd_dry_run(args):
     # Use temp file store — deleted after dry run
     import tempfile
     from knowledge_index import KnowledgeStore, AssetIndexer
+
     tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp_db_path = tmp_db.name
     tmp_db.close()
     store = KnowledgeStore(tmp_db_path)
 
     from project_profile import load_profile
+
     project_profile = load_profile(emit_info=False)
     indexer = AssetIndexer(
-        store, content_path,
+        store,
+        content_path,
         plugin_paths=plugin_paths if plugin_paths else None,
         profile=project_profile,
     )
@@ -717,7 +779,9 @@ def cmd_dry_run(args):
     def progress(status_msg, current, total):
         if total > 0:
             pct = int(100 * current / total)
-            sys.stdout.write(f"\r  {status_msg}: {current:,}/{total:,} ({pct}%)" + " " * 10)
+            sys.stdout.write(
+                f"\r  {status_msg}: {current:,}/{total:,} ({pct}%)" + " " * 10
+            )
         else:
             sys.stdout.write(f"\r  {status_msg}..." + " " * 20)
         sys.stdout.flush()
@@ -744,8 +808,13 @@ def cmd_dry_run(args):
 
         # Determine semantic vs lightweight types using profile
         _BASE_SEMANTIC_TYPES = {
-            "Blueprint", "WidgetBlueprint", "DataTable", "Material",
-            "MaterialInstance", "MaterialFunction", "DataAsset",
+            "Blueprint",
+            "WidgetBlueprint",
+            "DataTable",
+            "Material",
+            "MaterialInstance",
+            "MaterialFunction",
+            "DataAsset",
         }
 
         semantic_count = 0
@@ -771,14 +840,18 @@ def cmd_dry_run(args):
         if total_assets > 0:
             semantic_rate = 2.0  # assets/sec (full parse + embed)
             lightweight_rate = 50.0  # assets/sec (refs only)
-            est_seconds = semantic_count / semantic_rate + lightweight_count / lightweight_rate
+            est_seconds = (
+                semantic_count / semantic_rate + lightweight_count / lightweight_rate
+            )
             if est_seconds < 60:
                 est_str = f"~{int(est_seconds)}s"
             elif est_seconds < 3600:
                 est_str = f"~{int(est_seconds / 60)}m"
             else:
                 est_str = f"~{est_seconds / 3600:.1f} hours"
-            print(f"Estimated full index time: {est_str} ({semantic_count:,} semantic, {lightweight_count:,} lightweight)")
+            print(
+                f"Estimated full index time: {est_str} ({semantic_count:,} semantic, {lightweight_count:,} lightweight)"
+            )
     finally:
         store.close()
         # Clean up temp database
@@ -801,7 +874,7 @@ Project Commands:
 
 Indexing Options:
   --profile <hybrid|quick>  Primary index mode selector
-  --source                C++ source files in Source/ and Plugins/
+  --source                Scan C++ headers for class→source bridge
   --plugins               Include plugin Content folders (Plugins/*/Content, Plugins/GameFeatures/*/Content)
   --embed                 Generate sentence-transformer embeddings (slower, better semantic search)
   --rebuild-fts           Fix FTS5 corruption ("missing row X from content table" errors)
@@ -819,7 +892,7 @@ Examples:
   python index.py --embed                            # With embeddings for semantic search
   python index.py --project shootergame
   python index.py --rebuild-fts           # Fix corrupted FTS5 index
-"""
+""",
     )
 
     # Subcommands for project management
@@ -828,7 +901,9 @@ Examples:
     # add command
     add_parser = subparsers.add_parser("add", help="Add a project")
     add_parser.add_argument("path", help="Path to .uproject file")
-    add_parser.add_argument("--name", help="Short name for project (default: derived from filename)")
+    add_parser.add_argument(
+        "--name", help="Short name for project (default: derived from filename)"
+    )
 
     # use command
     use_parser = subparsers.add_parser("use", help="Switch active project")
@@ -843,16 +918,48 @@ Examples:
         choices=["hybrid", "quick"],
         help="Index mode selector",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Preview what would be indexed (classify only, no DB writes)")
-    parser.add_argument("--source", action="store_true", help="Index C++ source files")
-    parser.add_argument("--plugins", action="store_true", help="Include plugin Content folders (e.g., Plugins/*/Content)")
-    parser.add_argument("--embed", action="store_true", help="Generate embeddings for semantic search (requires sentence-transformers)")
-    parser.add_argument("--path", help="Only index assets under this path (e.g., /Game/UI)")
-    parser.add_argument("--force", action="store_true", help="Force re-index even if unchanged (bypass fingerprint check)")
-    parser.add_argument("--rebuild-fts", action="store_true", help="Rebuild FTS5 index to fix corruption (missing row errors)")
-    parser.add_argument("--status", action="store_true", help="Show detailed index statistics")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview what would be indexed (classify only, no DB writes)",
+    )
+    parser.add_argument(
+        "--source",
+        action="store_true",
+        help="Scan C++ headers for class-to-source bridge (no docs created)",
+    )
+    parser.add_argument(
+        "--plugins",
+        action="store_true",
+        help="Include plugin Content folders (e.g., Plugins/*/Content)",
+    )
+    parser.add_argument(
+        "--embed",
+        action="store_true",
+        help="Generate embeddings for semantic search (requires sentence-transformers)",
+    )
+    parser.add_argument(
+        "--path", help="Only index assets under this path (e.g., /Game/UI)"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-index even if unchanged (bypass fingerprint check)",
+    )
+    parser.add_argument(
+        "--rebuild-fts",
+        action="store_true",
+        help="Rebuild FTS5 index to fix corruption (missing row errors)",
+    )
+    parser.add_argument(
+        "--status", action="store_true", help="Show detailed index statistics"
+    )
     parser.add_argument("--project", help="Override active project for this command")
-    parser.add_argument("--timing", action="store_true", help="Enable detailed timing instrumentation (also set UE_INDEX_TIMING=1)")
+    parser.add_argument(
+        "--timing",
+        action="store_true",
+        help="Enable detailed timing instrumentation (also set UE_INDEX_TIMING=1)",
+    )
     parser.add_argument(
         "--quick-profile",
         choices=sorted(QUICK_TYPE_PROFILES.keys()),
@@ -917,7 +1024,7 @@ Examples:
     args = parser.parse_args()
 
     # Enable timing via environment variable if --timing flag is set
-    if getattr(args, 'timing', False):
+    if getattr(args, "timing", False):
         os.environ["UE_INDEX_TIMING"] = "1"
 
     # Route to appropriate handler
@@ -927,11 +1034,11 @@ Examples:
         cmd_use(args)
     elif args.command == "list":
         cmd_list(args)
-    elif getattr(args, 'rebuild_fts', False):
+    elif getattr(args, "rebuild_fts", False):
         cmd_rebuild_fts(args)
-    elif getattr(args, 'dry_run', False):
+    elif getattr(args, "dry_run", False):
         cmd_dry_run(args)
-    elif getattr(args, 'status', False):
+    elif getattr(args, "status", False):
         cmd_status(args)
     else:
         # Default behavior: run indexing with saved/default options.

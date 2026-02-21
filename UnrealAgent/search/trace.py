@@ -429,25 +429,6 @@ def build_asset_system_trace(
                             )
                     continue
 
-                if to_id.startswith(
-                    ("cpp_class:", "cpp_func:", "cpp_prop:", "source:")
-                ):
-                    if to_id in seen_systems:
-                        continue
-                    seen_systems.add(to_id)
-                    systems.append(
-                        {
-                            "path": row["to_path"]
-                            or to_id.split(":", 1)[-1].split("::")[0],
-                            "name": row["to_name"] or to_id.split("::")[-1],
-                            "type": row["to_type"] or "CppSymbol",
-                            "snippet": to_text or f"System ref from {target_name}",
-                            "score": 2.2,
-                            "relationship": "system_ref",
-                        }
-                    )
-                    continue
-
                 if to_id.startswith("script:"):
                     script_ref = to_id[len("script:") :]
                     if script_ref.startswith("/Script/"):
@@ -519,20 +500,6 @@ def build_asset_system_trace(
                 token_variants.append(base_token[4:])
 
             owner_rows = []
-            for variant in token_variants[:2]:
-                like = f"%{variant}%"
-                owner_rows.extend(
-                    conn.execute(
-                        """
-                        SELECT type, path, name, text
-                        FROM docs
-                        WHERE type IN ('source_file', 'cpp_class', 'cpp_func')
-                          AND (name LIKE ? OR text LIKE ?)
-                        LIMIT 30
-                        """,
-                        (like, like),
-                    ).fetchall()
-                )
 
             _base_rank_terms = [
                 "HUD",
@@ -568,40 +535,6 @@ def build_asset_system_trace(
                 )
                 if len(probable_owners) >= max(4, min(limit, 10)):
                     break
-
-        if not probable_owners and str(target_type).lower() == "widgetblueprint":
-            _base_fallback = [
-                "%GameFeatureAction_AddWidget%",
-                "%UIExtensionPointWidget%",
-                "%PrimaryGameLayout%",
-            ]
-            try:
-                _prof = get_profile()
-                _all_fallback = _base_fallback + _prof.widget_fallback_patterns
-            except Exception:
-                _all_fallback = _base_fallback
-            or_clauses = " OR ".join("name LIKE ?" for _ in _all_fallback)
-            fallback_rows = conn.execute(
-                f"""
-                SELECT type, path, name, text
-                FROM docs
-                WHERE type IN ('source_file', 'cpp_class', 'cpp_func')
-                  AND ({or_clauses})
-                LIMIT 10
-                """,
-                _all_fallback,
-            ).fetchall()
-            for row in fallback_rows:
-                probable_owners.append(
-                    {
-                        "path": row["path"],
-                        "name": row["name"],
-                        "type": row["type"],
-                        "snippet": compact_snippet(row["text"] or ""),
-                        "score": 1.1,
-                        "relationship": "possible_owner",
-                    }
-                )
 
         systems = systems[: max(4, min(limit, 12))]
         structural_deps = structural_deps[: max(4, min(limit, 12))]

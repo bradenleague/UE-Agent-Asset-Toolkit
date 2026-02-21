@@ -8,7 +8,7 @@ import sys
 import os
 import json
 
-from core import (
+from core import (  # noqa: F401 — re-exported for index.py `import tools`
     UE_EDITOR,
     PROJECT,
     DEBUG,
@@ -106,7 +106,6 @@ TOOLS = [
 ]
 
 
-
 if __name__ == "__main__":
     DEBUG = True
 
@@ -122,9 +121,10 @@ if __name__ == "__main__":
         print("  python tools.py --list                # List configured projects")
         print()
         print("For indexing, use index.py from the repo root:")
-        print("  python index.py                       # Run with saved/default profile")
+        print(
+            "  python index.py                       # Run with saved/default profile"
+        )
         print("  python index.py --profile quick       # High-value types only")
-        print("  python index.py --source              # Index C++ source files")
         print()
         print("Examples:")
         print("  python tools.py lyra")
@@ -179,13 +179,11 @@ if __name__ == "__main__":
         for doc_type, count in sorted(status.docs_by_type.items()):
             print(f"  {doc_type}: {count}")
 
-        # Show C++ source summary
-        cpp_types = ["source_file", "cpp_class", "cpp_func", "cpp_property"]
-        cpp_count = sum(status.docs_by_type.get(t, 0) for t in cpp_types)
-        if cpp_count > 0:
+        # Show C++ class index stats
+        cpp_stats = store.get_cpp_class_stats()
+        if cpp_stats["total_classes"] > 0:
             print()
-            print("C++ Source Summary:")
-            print(f"  Total C++ documents: {cpp_count}")
+            print(f"C++ class index: {cpp_stats['total_classes']} classes")
 
         # Show lightweight assets summary
         if hasattr(status, "lightweight_total") and status.lightweight_total > 0:
@@ -223,10 +221,13 @@ if __name__ == "__main__":
         print()
 
         from project_profile import load_profile
+
         store = KnowledgeStore(db_path)
         project_profile = load_profile(emit_info=False)
         if project_profile.profile_name == "_defaults":
-            print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+            print(
+                "INFO: Using engine defaults. Profile not required for standard UE projects."
+            )
             print()
         indexer = AssetIndexer(store, content_path, profile=project_profile)
 
@@ -421,10 +422,13 @@ if __name__ == "__main__":
             )
 
         from project_profile import load_profile
+
         store = KnowledgeStore(db_path)
         project_profile = load_profile(emit_info=False)
         if project_profile.profile_name == "_defaults":
-            print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+            print(
+                "INFO: Using engine defaults. Profile not required for standard UE projects."
+            )
             print()
         indexer = AssetIndexer(
             store,
@@ -598,108 +602,22 @@ if __name__ == "__main__":
             print(f"  Errors: {stats['errors']}")
         sys.exit(0)
 
-    if arg == "--index-source":
+    if arg == "--scan-cpp":
         from pathlib import Path
 
         if not PROJECT:
             print("ERROR: No project configured")
-            print(
-                "Make sure config.json is set up or a .uproject file is in the parent directory"
-            )
             sys.exit(1)
 
         project_root = Path(os.path.dirname(PROJECT))
-        source_path = project_root / "Source"
-        plugins_path = project_root / "Plugins"
-
-        if not source_path.exists() and not plugins_path.exists():
-            print("ERROR: No Source/ or Plugins/ folder found")
-            print(f"Looked in: {project_root}")
-            sys.exit(1)
-
         db_path = Path(get_project_db_path())
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        from knowledge_index import KnowledgeStore, SourceIndexer
-
-        print("Indexing C++ source files...")
-        print(f"  Project: {project_root}")
-        print(f"  Database: {db_path}")
-        print()
+        from knowledge_index import KnowledgeStore
 
         store = KnowledgeStore(db_path)
-        indexer = SourceIndexer(store, PROJECT)
-
-        # Progress tracking with ETA
-        import time as time_module
-
-        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        progress_state = {"idx": 0, "start_time": None}
-
-        def progress(path, current, total):
-            now = time_module.time()
-            if progress_state["start_time"] is None:
-                progress_state["start_time"] = now
-
-            # Get file name from path
-            file_name = path.split("/")[-1] if "/" in path else path
-            if len(file_name) > 35:
-                file_name = file_name[:32] + "..."
-
-            # Calculate ETA
-            elapsed = now - progress_state["start_time"]
-            eta_str = ""
-            if current > 0 and elapsed > 2:
-                rate = current / elapsed
-                remaining = total - current
-                if rate > 0:
-                    eta_seconds = remaining / rate
-                    eta_str = f" - ETA: {format_eta(eta_seconds)}"
-
-            spinner = spinner_chars[progress_state["idx"] % len(spinner_chars)]
-            progress_state["idx"] += 1
-            pct = int(100 * current / total) if total > 0 else 0
-            sys.stdout.write(
-                f"\r  {spinner} [{current}/{total}] {pct}%{eta_str} - {file_name:<30}"
-            )
-            sys.stdout.flush()
-
-        # Index Source/ folder
-        if source_path.exists():
-            print("Indexing Source/...")
-            stats1 = indexer.index_source(progress_callback=progress)
-            sys.stdout.write("\r" + " " * 80 + "\r")
-            print(
-                f"  Source/: {stats1.get('indexed', 0)} files indexed, {stats1.get('unchanged', 0)} unchanged"
-            )
-        else:
-            stats1 = {"total": 0, "indexed": 0, "unchanged": 0, "errors": 0}
-            print("  Source/ not found, skipping")
-
-        # Index Plugins/ folder
-        if plugins_path.exists():
-            print("Indexing Plugins/...")
-            stats2 = indexer.index_plugins(progress_callback=progress)
-            sys.stdout.write("\r" + " " * 80 + "\r")
-            print(
-                f"  Plugins/: {stats2.get('indexed', 0)} files indexed, {stats2.get('unchanged', 0)} unchanged"
-            )
-        else:
-            stats2 = {"total": 0, "indexed": 0, "unchanged": 0, "errors": 0}
-            print("  Plugins/ not found, skipping")
-
-        print()
-        total_indexed = stats1.get("indexed", 0) + stats2.get("indexed", 0)
-        total_unchanged = stats1.get("unchanged", 0) + stats2.get("unchanged", 0)
-        total_errors = stats1.get("errors", 0) + stats2.get("errors", 0)
-        total_purged = stats1.get("purged_docs", 0) + stats2.get("purged_docs", 0)
-        print("C++ source indexing complete:")
-        print(f"  Total indexed: {total_indexed}")
-        print(f"  Total unchanged: {total_unchanged}")
-        if total_purged > 0:
-            print(f"  Purged generated/intermediate docs: {total_purged}")
-        if total_errors > 0:
-            print(f"  Errors: {total_errors}")
+        count = store.scan_cpp_classes(project_root)
+        print(f"Scanned {count} C++ classes/structs into cpp_class_index")
         sys.exit(0)
 
     if arg == "--index-all":
@@ -718,9 +636,9 @@ if __name__ == "__main__":
         db_path = Path(get_project_db_path())
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        from knowledge_index import KnowledgeStore, AssetIndexer, SourceIndexer
+        from knowledge_index import KnowledgeStore, AssetIndexer
 
-        print("Building full semantic index (assets + source)...")
+        print("Building full semantic index (assets + C++ class scan)...")
         print(f"  Project: {project_root}")
         print(f"  Database: {db_path}")
         print()
@@ -764,9 +682,12 @@ if __name__ == "__main__":
         if content_path.exists():
             print("Indexing assets...")
             from project_profile import load_profile
+
             project_profile = load_profile(emit_info=False)
             if project_profile.profile_name == "_defaults":
-                print("INFO: Using engine defaults. Profile not required for standard UE projects.")
+                print(
+                    "INFO: Using engine defaults. Profile not required for standard UE projects."
+                )
             asset_indexer = AssetIndexer(store, content_path, profile=project_profile)
             asset_stats = asset_indexer.index_folder(
                 "/Game", progress_callback=progress
@@ -778,23 +699,10 @@ if __name__ == "__main__":
         else:
             print("  Content/ not found, skipping assets")
 
-        # Index source
-        source_path = project_root / "Source"
-        plugins_path = project_root / "Plugins"
-        if source_path.exists() or plugins_path.exists():
-            print("Indexing C++ source...")
-            source_indexer = SourceIndexer(store, PROJECT)
-            source_stats = source_indexer.index_all(progress_callback=progress)
-            sys.stdout.write("\r" + " " * 80 + "\r")
-            print(
-                f"  Source: {source_stats.get('indexed', 0)} indexed, {source_stats.get('unchanged', 0)} unchanged"
-            )
-            if source_stats.get("purged_docs", 0) > 0:
-                print(
-                    f"  Source purge: {source_stats.get('purged_docs', 0)} generated/intermediate docs removed"
-                )
-        else:
-            print("  Source/Plugins not found, skipping C++ source")
+        # Scan C++ headers for class index
+        print("Scanning C++ headers...")
+        cpp_count = store.scan_cpp_classes(project_root)
+        print(f"  C++ classes: {cpp_count} found")
 
         print()
         print("Full index build complete. Run --index-status to see summary.")

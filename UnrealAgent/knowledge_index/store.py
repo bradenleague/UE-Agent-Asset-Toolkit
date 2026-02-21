@@ -274,7 +274,8 @@ class KnowledgeStore:
             )
 
             # C++ class name index for cross-referencing with Blueprints
-            # Maps simple class name (e.g., "UCharacterMovementComponent") to doc_id
+            # Maps simple class name (e.g., "UCharacterMovementComponent") to source_path.
+            # doc_id column is legacy (always 'n/a'), kept for schema compatibility.
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS cpp_class_index (
                     class_name TEXT PRIMARY KEY,
@@ -850,24 +851,15 @@ class KnowledgeStore:
             or ref.startswith("widget:")
         ):
             return ref
-        if (
-            ref.startswith("class:")
-            or ref.startswith("cpp_class:")
-            or ref.startswith("cpp_func:")
-            or ref.startswith("source:")
-        ):
+        if ref.startswith("class:") or ref.startswith("cpp_class:"):
             return ref
 
         # Convert /Game/... path to asset: format
         if ref.startswith("/Game/"):
             return f"asset:{ref}"
 
-        # For /Script/ references, try to resolve to C++ class doc_id
+        # /Script/ references kept as script: prefix
         if ref.startswith("/Script/"):
-            resolved = self.resolve_script_class(ref, conn=conn)
-            if resolved:
-                return resolved  # Links directly to cpp_class doc
-            # Fallback: keep script: prefix for unresolved refs
             return f"script:{ref}"
 
         return f"asset:{ref}"
@@ -1875,36 +1867,33 @@ class KnowledgeStore:
     # C++ CLASS INDEX - For cross-referencing Blueprints with C++ source
     # =========================================================================
 
-    def upsert_cpp_class(self, class_name: str, doc_id: str, source_path: str = None):
+    def upsert_cpp_class(self, class_name: str, source_path: str):
         """
         Register a C++ class name for cross-referencing.
 
-        Called when indexing C++ source files to build the lookup table.
-
         Args:
             class_name: Simple class name (e.g., "UCharacterMovementComponent")
-            doc_id: Full doc_id (e.g., "cpp_class:Source/.../CharacterMovementComponent.h::UCharacterMovementComponent")
-            source_path: Optional source file path for debugging
+            source_path: Relative source file path
         """
         conn = self._get_connection()
         try:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO cpp_class_index (class_name, doc_id, source_path)
-                VALUES (?, ?, ?)
+                VALUES (?, 'n/a', ?)
             """,
-                (class_name, doc_id, source_path),
+                (class_name, source_path),
             )
             conn.commit()
         finally:
             conn.close()
 
-    def upsert_cpp_classes_batch(self, class_data: list[tuple[str, str, str]]):
+    def upsert_cpp_classes_batch(self, class_data: list[tuple[str, str]]):
         """
         Batch register C++ class names.
 
         Args:
-            class_data: List of (class_name, doc_id, source_path) tuples
+            class_data: List of (class_name, source_path) tuples
         """
         if not class_data:
             return
@@ -1914,7 +1903,7 @@ class KnowledgeStore:
             conn.executemany(
                 """
                 INSERT OR REPLACE INTO cpp_class_index (class_name, doc_id, source_path)
-                VALUES (?, ?, ?)
+                VALUES (?, 'n/a', ?)
             """,
                 class_data,
             )
@@ -1946,94 +1935,6 @@ class KnowledgeStore:
                 candidates.append(prefix + class_name)
         return candidates
 
-    def resolve_cpp_class(self, class_name: str) -> Optional[str]:
-        """
-        Resolve a C++ class name to its doc_id.
-
-        Args:
-            class_name: Simple class name (e.g., "UCharacterMovementComponent")
-
-        Returns:
-            doc_id if found, None otherwise
-        """
-        conn = self._get_connection()
-        try:
-            row = conn.execute(
-                "SELECT doc_id FROM cpp_class_index WHERE class_name = ?", (class_name,)
-            ).fetchone()
-            return row["doc_id"] if row else None
-        finally:
-            conn.close()
-
-    def resolve_script_class(
-        self, script_ref: str, conn: sqlite3.Connection = None
-    ) -> Optional[str]:
-        """
-        Resolve a /Script/ reference to a cpp_class doc_id.
-
-        Handles various formats:
-        - /Script/Engine.UClassName -> resolves UClassName
-        - /Script/UClassName -> resolves UClassName
-        - UClassName_C -> strips _C suffix and resolves UClassName
-
-        Args:
-            script_ref: Script reference path or class name
-
-        Returns:
-            cpp_class doc_id if found, None otherwise
-        """
-        # Extract class name from /Script/Module.ClassName format
-        if script_ref.startswith("/Script/"):
-            remainder = script_ref[8:]  # len("/Script/") = 8
-            if "." in remainder:
-                class_name = remainder.split(".")[-1]
-            else:
-                class_name = remainder
-        else:
-            class_name = script_ref
-
-        candidate_names = self._probe_class_name(class_name)
-        bare_name = candidate_names[0]  # _C-stripped bare name
-
-        # Reuse current connection when available to avoid nested DB locks
-        # during batch write transactions.
-        if conn is not None:
-            placeholders = ",".join("?" * len(candidate_names))
-            row = conn.execute(
-                f"SELECT doc_id FROM cpp_class_index WHERE class_name IN ({placeholders}) LIMIT 1",
-                tuple(candidate_names),
-            ).fetchone()
-            if row:
-                return row["doc_id"]
-
-            # Fallback to source file doc when class extraction missed the UCLASS.
-            source_candidates = (f"{bare_name}.h", f"{bare_name}.cpp")
-            row = conn.execute(
-                "SELECT doc_id FROM docs WHERE type = 'source_file' AND name IN (?, ?) LIMIT 1",
-                source_candidates,
-            ).fetchone()
-            return row["doc_id"] if row else None
-
-        for candidate in candidate_names:
-            resolved = self.resolve_cpp_class(candidate)
-            if resolved:
-                return resolved
-
-        source_doc = self._resolve_source_file_doc(bare_name)
-        return source_doc
-
-    def _resolve_source_file_doc(self, base_name: str) -> Optional[str]:
-        """Resolve a source_file doc from a bare type name."""
-        conn = self._get_connection()
-        try:
-            row = conn.execute(
-                "SELECT doc_id FROM docs WHERE type = 'source_file' AND name IN (?, ?) LIMIT 1",
-                (f"{base_name}.h", f"{base_name}.cpp"),
-            ).fetchone()
-            return row["doc_id"] if row else None
-        finally:
-            conn.close()
-
     def resolve_cpp_sources(self, class_names: list[str]) -> dict[str, dict]:
         """Batch-resolve C++ class names to source paths.
 
@@ -2041,7 +1942,7 @@ class KnowledgeStore:
             class_names: List of class names (with or without U/A/F prefix)
 
         Returns:
-            Dict mapping input class name -> {class_name, doc_id, source_path}
+            Dict mapping input class name -> {class_name, source_path}
             Only contains entries that resolved successfully.
         """
         if not class_names:
@@ -2059,7 +1960,7 @@ class KnowledgeStore:
         conn = self._get_connection()
         try:
             rows = conn.execute(
-                f"SELECT class_name, doc_id, source_path FROM cpp_class_index "
+                f"SELECT class_name, source_path FROM cpp_class_index "
                 f"WHERE class_name IN ({placeholders})",
                 all_candidates,
             ).fetchall()
@@ -2068,7 +1969,6 @@ class KnowledgeStore:
             for row in rows:
                 hit = {
                     "class_name": row["class_name"],
-                    "doc_id": row["doc_id"],
                     "source_path": row["source_path"],
                 }
                 for input_name in candidate_to_inputs.get(row["class_name"], []):
@@ -2082,10 +1982,90 @@ class KnowledgeStore:
         """Resolve a single C++ class name to its source path.
 
         Returns:
-            {class_name, doc_id, source_path} or None if not found.
+            {class_name, source_path} or None if not found.
         """
         result = self.resolve_cpp_sources([class_name])
         return result.get(class_name)
+
+    def scan_cpp_classes(self, project_root: Path) -> int:
+        """Scan C++ headers and populate cpp_class_index (class_name -> source_path).
+
+        No docs created — only the lightweight lookup table.
+
+        Args:
+            project_root: Path to the project root (parent of Source/ and Plugins/)
+
+        Returns:
+            Number of classes found
+        """
+        import re as _re
+
+        from .cpp_parser import CppParser
+
+        uclass_re = CppParser.UCLASS_PATTERN
+        ustruct_re = CppParser.USTRUCT_PATTERN
+
+        # Comment-stripping regexes (same as CppParser.parse_file)
+        single_line_comment_re = _re.compile(r"//.*$", _re.MULTILINE)
+        multi_line_comment_re = _re.compile(r"/\*.*?\*/", _re.DOTALL)
+
+        # Directories/files to skip
+        skip_dirs = frozenset(
+            {
+                "Intermediate",
+                "Binaries",
+                ".vs",
+                "DerivedDataCache",
+                "generated",
+            }
+        )
+
+        class_data: list[tuple[str, str]] = []
+
+        for search_dir in ("Source", "Plugins"):
+            root = project_root / search_dir
+            if not root.exists():
+                continue
+
+            for header in root.rglob("*.h"):
+                # Skip generated/intermediate files
+                if header.suffix != ".h":
+                    continue
+                if any(part in skip_dirs for part in header.parts):
+                    continue
+                if header.name.endswith(".generated.h") or header.name.endswith(
+                    ".gen.h"
+                ):
+                    continue
+
+                try:
+                    content = header.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+
+                # Strip comments
+                content = single_line_comment_re.sub("", content)
+                content = multi_line_comment_re.sub("", content)
+
+                rel_path = str(header.relative_to(project_root))
+
+                for match in uclass_re.finditer(content):
+                    class_name = match.group(3)
+                    if class_name:
+                        class_data.append((class_name, rel_path))
+
+                for match in ustruct_re.finditer(content):
+                    struct_name = match.group(3)
+                    if struct_name:
+                        class_data.append((struct_name, rel_path))
+
+        # Rebuild: clear stale entries then insert current scan results
+        conn = self._get_connection()
+        conn.execute("DELETE FROM cpp_class_index")
+        conn.commit()
+
+        self.upsert_cpp_classes_batch(class_data)
+        return len(class_data)
 
     def get_cpp_class_stats(self) -> dict:
         """Get statistics about the C++ class index."""
