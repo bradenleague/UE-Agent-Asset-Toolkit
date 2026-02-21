@@ -48,7 +48,11 @@ from core import (
     get_plugin_paths,
 )
 from assets import inspect_asset as _raw_inspect
-from search import unreal_search, get_store, get_retriever_instance
+from search import get_store, get_retriever_instance
+from search import engine as _search_engine
+from search.engine import _normalize_ue_path
+from search.trace import should_try_tag_search as _should_try_tag_search
+from search.retriever import enrich_results_with_full_docs as _enrich_results_with_full_docs
 
 # Create the MCP server
 server = Server("unreal-asset-tools")
@@ -57,6 +61,42 @@ server = Server("unreal-asset-tools")
 # =============================================================================
 # Tool: inspect_asset
 # =============================================================================
+
+
+def _get_store():
+    """Compatibility shim for tests that monkeypatch mcp_server._get_store."""
+    return get_store()
+
+
+def _get_retriever(enable_embeddings: bool = False):
+    """Compatibility shim for tests that monkeypatch mcp_server._get_retriever."""
+    return get_retriever_instance(enable_embeddings=enable_embeddings)
+
+
+def unreal_search(
+    query: str,
+    search_type: str = "auto",
+    asset_types: list[str] = None,
+    limit: int = 20,
+) -> dict:
+    """Compatibility wrapper over modular search.engine.unreal_search."""
+    original_get_store = _search_engine.get_store
+    original_get_retriever = _search_engine.get_retriever_instance
+    original_enrich = _search_engine.enrich_results_with_full_docs
+    try:
+        _search_engine.get_store = _get_store
+        _search_engine.get_retriever_instance = _get_retriever
+        _search_engine.enrich_results_with_full_docs = _enrich_results_with_full_docs
+        return _search_engine.unreal_search(
+            query=query,
+            search_type=search_type,
+            asset_types=asset_types,
+            limit=limit,
+        )
+    finally:
+        _search_engine.get_store = original_get_store
+        _search_engine.get_retriever_instance = original_get_retriever
+        _search_engine.enrich_results_with_full_docs = original_enrich
 
 
 def _is_valid_asset_path(path: str) -> bool:

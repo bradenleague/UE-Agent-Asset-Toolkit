@@ -221,6 +221,14 @@ def list_projects():
     }
 
 
+def get_config() -> dict:
+    """Return raw config.json contents, or defaults when missing."""
+    if not os.path.exists(CONFIG_FILE):
+        return {"active_project": "", "projects": {}, "tools": {}}
+    with open(CONFIG_FILE, "r") as f:
+        return json.load(f)
+
+
 def get_active_project_name() -> Optional[str]:
     if not os.path.exists(CONFIG_FILE):
         return None
