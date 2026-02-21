@@ -2,16 +2,19 @@
   "profile_name": "_defaults",
   "export_class_reclassify": {
     "GameFeatureData": "GameFeatureData",
+    "GameplayEffect": "GameplayEffect",
     "DataAsset": "DataAsset",
     "PrimaryDataAsset": "DataAsset",
     "PrimaryAssetLabel": "DataAsset",
     "GameSettingVisualData": "DataAsset"
   },
-  "name_prefixes": {},
-  "semantic_types": [],
+  "name_prefixes": {
+    "GE_": "GameplayEffect"
+  },
+  "semantic_types": ["GameplayEffect"],
   "game_feature_types": ["GameFeatureData"],
   "blueprint_parent_redirects": {},
-  "data_asset_extractors": [],
+  "data_asset_extractors": ["GameplayEffect"],
   "deep_ref_export_classes": [
     "GameFeatureData",
     "DataRegistrySource_DataTable",

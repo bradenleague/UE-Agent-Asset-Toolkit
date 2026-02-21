@@ -380,6 +380,7 @@ _BASE_STRUCTURAL_ASSET_TYPES = frozenset(
         "DataAsset",
         "DataTable",
         "GameFeatureData",
+        "GameplayEffect",
         "InputAction",
         "InputMappingContext",
     }
@@ -518,6 +519,55 @@ def _should_try_tag_search(query: str) -> bool:
     return bool(re.match(r"^[A-Z][A-Za-z0-9]+(\.[A-Z][A-Za-z0-9]*)+(\.\*)?$", query))
 
 
+_INHERITS_RE = re.compile(
+    r"(?:what\s+)?(?:inherits?\s+from|subclass(?:es)?\s+of|children\s+of|class(?:es)?\s+extending)\s+(.+)",
+    re.IGNORECASE,
+)
+
+
+def _extract_inherits_target(query: str) -> Optional[str]:
+    """Extract the parent class/asset from an inheritance-style query."""
+    m = _INHERITS_RE.search(query.strip())
+    if m:
+        target = m.group(1).strip(" ?\"'")
+        # Strip leading articles (e.g. "the GameplayEffect" → "GameplayEffect")
+        for article in ("the ", "a ", "an "):
+            if target.lower().startswith(article):
+                target = target[len(article) :].strip()
+                break
+        return target
+    return None
+
+
+def _normalize_inherits_target_token(token: str) -> tuple[str, str]:
+    """Normalize inherits target input and derive a class-like bare name."""
+    normalized = token.strip(" ?\"'")
+
+    # Allow edge-style IDs in natural language queries, e.g. "inherits from class:Foo"
+    while normalized.lower().startswith(("class:", "asset:")):
+        normalized = normalized.split(":", 1)[1].strip()
+
+    if normalized.startswith("/"):
+        normalized = _normalize_ue_path(normalized)
+
+    bare_name = normalized.split("/")[-1] if normalized else ""
+
+    # /Script/Module.Class -> Class
+    if normalized.startswith("/Script/") and "." in bare_name:
+        bare_name = bare_name.split(".")[-1]
+    # /Game/Foo/Bar.Bar_C -> Bar
+    elif normalized.startswith("/") and "." in bare_name:
+        bare_name = bare_name.rsplit(".", 1)[0]
+    # GameplayAbilities.GameplayEffect -> GameplayEffect
+    elif "." in bare_name:
+        bare_name = bare_name.split(".")[-1]
+
+    if bare_name.endswith("_C"):
+        bare_name = bare_name[:-2]
+
+    return normalized, bare_name
+
+
 def _extract_trace_target(query: str) -> Optional[str]:
     """Extract target symbol/path from system-trace style questions."""
     query = query.strip()
@@ -548,6 +598,26 @@ def _extract_trace_target(query: str) -> Optional[str]:
     return None
 
 
+def _normalize_ue_path(path: str) -> str:
+    """Normalize a UE object-style path to package path form.
+
+    Strips object suffixes like '.GE_Base_C' and removes _C suffix
+    from the leaf, so '/Game/GE/GE_Base.GE_Base_C' → '/Game/GE/GE_Base'.
+    Also handles non-/Game/ mount paths (e.g. /ShooterCore/...).
+    """
+    if not path or not path.startswith("/"):
+        return path
+    if path.startswith("/Script/"):
+        return path  # dot is module.class separator, not object suffix
+    # Strip object-style suffix: /Game/Foo/Bar.Bar_C → /Game/Foo/Bar
+    if "." in path.split("/")[-1]:
+        path = path.rsplit(".", 1)[0]
+    # Strip trailing _C on leaf
+    if path.endswith("_C"):
+        path = path[:-2]
+    return path
+
+
 def _resolve_asset_paths_by_token(
     store,
     asset_token: str,
@@ -559,8 +629,9 @@ def _resolve_asset_paths_by_token(
     if not asset_token:
         return []
 
-    if asset_token.startswith("/Game/"):
-        return [asset_token]
+    # Explicit path (any mount point) — normalize and return directly
+    if asset_token.startswith("/"):
+        return [_normalize_ue_path(asset_token)]
 
     aliases = _build_token_aliases(asset_token) or [asset_token]
     # Helpful fallbacks for plain-language tokens like "healthbar".
@@ -1116,7 +1187,7 @@ def unreal_search(
 
     Args:
         query: Search query (asset name, concept, or natural language)
-        search_type: "auto" (default), "name", "semantic", "refs", or "trace"
+        search_type: "auto" (default), "name", "semantic", "refs", "trace", "tags", or "inherits"
         asset_types: Filter by types (Blueprint, WidgetBlueprint, Material, etc.)
         limit: Max results to return
 
@@ -1132,6 +1203,12 @@ def unreal_search(
             "results": [],
             "error": "Query cannot be empty",
         }
+
+    # Strip class:/asset: prefixes — callers may pass edge-style IDs
+    if query.startswith("class:"):
+        query = query[6:]
+    elif query.startswith("asset:"):
+        query = query[6:]
 
     store = _get_store()
 
@@ -1149,7 +1226,9 @@ def unreal_search(
 
     # Auto-detect search type
     if search_type == "auto" and query_mode != "tags":
-        if _extract_trace_target(query):
+        if _extract_inherits_target(query):
+            query_mode = "inherits"
+        elif _extract_trace_target(query):
             query_mode = "trace"
         # Check for asset path patterns (including plugin paths like /ShooterCore/, /Lyra/, etc.)
         elif query.startswith("/") and not query.startswith("/Script/"):
@@ -1213,6 +1292,40 @@ def unreal_search(
                         "score": 1.0,
                     }
                 )
+
+    elif query_mode == "inherits":
+        # Inheritance query: find all children of a class or asset
+        inherits_token = _extract_inherits_target(query) or query.strip()
+        inherits_token, bare_name = _normalize_inherits_target_token(inherits_token)
+
+        # Build list of possible parent to_id values
+        parent_ids: list[str] = []
+
+        # Always include class:<name> (covers engine classes + unresolved parents)
+        if bare_name:
+            parent_ids.append(f"class:{bare_name}")
+
+        # Try to resolve to concrete asset paths
+        target_paths = _resolve_asset_paths_by_token(store, inherits_token, limit=5)
+        for tp in target_paths:
+            if not tp.startswith("/Script/"):
+                parent_ids.append(f"asset:{tp}")
+
+        # Preserve order while dropping duplicates
+        parent_ids = list(dict.fromkeys(parent_ids))
+
+        children = store.find_children_of(parent_ids, max_depth=4)
+        parent_display = bare_name or inherits_token or "parent"
+        for child in children:
+            results.append(
+                {
+                    "path": child["path"],
+                    "name": child["name"],
+                    "type": child["asset_type"] or "Unknown",
+                    "snippet": f"Inherits from {parent_display} (depth {child['depth']})",
+                    "score": round(1.0 / child["depth"], 3),
+                }
+            )
 
     elif query_mode == "trace":
         trace_token = _extract_trace_target(query) or query.strip()
@@ -1418,10 +1531,16 @@ def unreal_search(
             conn = store._get_connection()
             try:
                 like_pattern = f"%{query}%"
-                lightweight_rows = conn.execute(
-                    "SELECT path, name, asset_type FROM lightweight_assets WHERE name LIKE ? LIMIT ?",
-                    (like_pattern, limit),
-                ).fetchall()
+                lw_sql = "SELECT path, name, asset_type FROM lightweight_assets WHERE name LIKE ?"
+                lw_params: list = [like_pattern]
+                if asset_types:
+                    at_lower = {t.lower() for t in asset_types}
+                    at_placeholders = ",".join("?" * len(at_lower))
+                    lw_sql += f" AND LOWER(asset_type) IN ({at_placeholders})"
+                    lw_params.extend(at_lower)
+                lw_sql += " LIMIT ?"
+                lw_params.append(limit)
+                lightweight_rows = conn.execute(lw_sql, lw_params).fetchall()
                 for row in lightweight_rows:
                     if query_lower in row[1].lower():
                         results.append(
@@ -1470,9 +1589,12 @@ def unreal_search(
                     }
                 )
 
-    # Filter by asset types if specified
+    # Filter by asset types if specified (case-insensitive)
     if asset_types and results:
-        results = [r for r in results if r["type"] in asset_types]
+        asset_types_lower = {t.lower() for t in asset_types}
+        results = [
+            r for r in results if (r.get("type") or "").lower() in asset_types_lower
+        ]
 
     # Deduplicate by path, keeping the best quality entry.
     seen_paths = {}
@@ -1546,6 +1668,7 @@ def _select_fuzzy_match(results: list[dict], query: str) -> dict | None:
     """Select the best fuzzy match from search results, or None if not confident.
 
     Confidence rules:
+    - Exact name match (case-insensitive) → return immediately
     - Name substring match (query in name or vice versa) → accept top result
     - Score gap > 0.15 between top and second result → accept top result
     - Otherwise → reject (ambiguous cluster)
@@ -1553,9 +1676,15 @@ def _select_fuzzy_match(results: list[dict], query: str) -> dict | None:
     if not results:
         return None
 
+    query_lower = query.lower()
+
+    # Exact name match — highest confidence, prevents longer names from winning
+    for r in results:
+        if (r.get("name") or "").lower() == query_lower:
+            return r
+
     top = results[0]
     top_name = (top.get("name") or "").lower()
-    query_lower = query.lower()
 
     # Name substring match — high confidence
     if top_name and (query_lower in top_name or top_name in query_lower):
@@ -1694,8 +1823,16 @@ Returns structured results with paths, types, and relevance scores.""",
                     },
                     "search_type": {
                         "type": "string",
-                        "enum": ["auto", "name", "semantic", "refs", "trace", "tags"],
-                        "description": "Search mode: auto (default), name (exact), semantic (meaning), refs (find usages), trace (system flow for an asset), tags (GameplayTag lookup)",
+                        "enum": [
+                            "auto",
+                            "name",
+                            "semantic",
+                            "refs",
+                            "trace",
+                            "tags",
+                            "inherits",
+                        ],
+                        "description": "Search mode: auto (default), name (exact), semantic (meaning), refs (find usages), trace (system flow for an asset), tags (GameplayTag lookup), inherits (find subclasses/children)",
                         "default": "auto",
                     },
                     "asset_types": {

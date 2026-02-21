@@ -86,10 +86,27 @@ def _load_json_profile(name: str) -> dict:
 
 
 def _merge_profiles(defaults: dict, overlay: dict) -> dict:
-    """Merge overlay on top of defaults with per-key override semantics."""
+    """Merge overlay on top of defaults.
+
+    - dict values: deep-merge (overlay wins on key conflicts)
+    - list values: concatenate, deduplicate (preserving order)
+    - other values: overlay replaces entirely
+    """
     merged = dict(defaults)
     for key, value in overlay.items():
-        merged[key] = value  # Per-key override — overlay replaces entirely
+        default_val = merged.get(key)
+        if isinstance(default_val, dict) and isinstance(value, dict):
+            merged[key] = {**default_val, **value}
+        elif isinstance(default_val, list) and isinstance(value, list):
+            seen: set = set()
+            deduped: list = []
+            for item in default_val + value:
+                if item not in seen:
+                    seen.add(item)
+                    deduped.append(item)
+            merged[key] = deduped
+        else:
+            merged[key] = value
     return merged
 
 

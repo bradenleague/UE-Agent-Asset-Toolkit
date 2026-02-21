@@ -221,6 +221,7 @@ class KnowledgeStore:
                 "CREATE INDEX IF NOT EXISTS idx_docs_fingerprint ON docs(fingerprint)"
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id)")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(edge_type)"
             )
@@ -850,7 +851,8 @@ class KnowledgeStore:
         ):
             return ref
         if (
-            ref.startswith("cpp_class:")
+            ref.startswith("class:")
+            or ref.startswith("cpp_class:")
             or ref.startswith("cpp_func:")
             or ref.startswith("source:")
         ):
@@ -1693,6 +1695,57 @@ class KnowledgeStore:
                     "indexed_at": row["indexed_at"],
                 }
             return None
+        finally:
+            conn.close()
+
+    def find_children_of(self, parent_ids: list[str], max_depth: int = 4) -> list[dict]:
+        """Find all assets that inherit from any of the given parent_ids.
+
+        Uses a recursive CTE on the edges table (edge_type = 'inherits_from')
+        to walk the inheritance tree up to *max_depth* levels.
+
+        Args:
+            parent_ids: List of to_id values to search for (e.g.,
+                        ["class:GameplayEffect", "asset:/Game/GE_Base"]).
+            max_depth: Maximum depth for transitive inheritance (default 4).
+
+        Returns:
+            List of dicts with doc_id, depth, path, name, asset_type.
+        """
+        if not parent_ids:
+            return []
+
+        conn = self._get_connection()
+        try:
+            # Build UNION seeds for all parent_ids
+            placeholders = ",".join("?" * len(parent_ids))
+            sql = f"""
+                WITH RECURSIVE descendants(doc_id, depth) AS (
+                    SELECT from_id, 1 FROM edges
+                    WHERE to_id IN ({placeholders}) AND edge_type = 'inherits_from'
+                  UNION ALL
+                    SELECT e.from_id, d.depth + 1
+                    FROM edges e
+                    JOIN descendants d ON e.to_id = d.doc_id
+                    WHERE e.edge_type = 'inherits_from' AND d.depth < ?
+                )
+                SELECT DISTINCT d.doc_id, d.depth, docs.path, docs.name, docs.asset_type
+                FROM descendants d
+                JOIN docs ON docs.doc_id = d.doc_id
+                ORDER BY d.depth, docs.name
+            """
+            params = list(parent_ids) + [max_depth]
+            rows = conn.execute(sql, params).fetchall()
+            return [
+                {
+                    "doc_id": row["doc_id"],
+                    "depth": row["depth"],
+                    "path": row["path"],
+                    "name": row["name"],
+                    "asset_type": row["asset_type"],
+                }
+                for row in rows
+            ]
         finally:
             conn.close()
 

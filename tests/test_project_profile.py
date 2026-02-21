@@ -48,13 +48,26 @@ class TestLoadJsonProfile:
 
 
 class TestMergeProfiles:
-    def test_per_key_override(self):
+    def test_list_concatenate_dedupe(self):
         defaults = {"a": [1, 2], "b": {"x": 1}}
-        overlay = {"a": [3]}
+        overlay = {"a": [2, 3]}
         merged = _merge_profiles(defaults, overlay)
-        # "a" fully replaced, "b" kept from defaults
-        assert merged["a"] == [3]
+        # Lists: concatenate + dedupe, preserving order
+        assert merged["a"] == [1, 2, 3]
         assert merged["b"] == {"x": 1}
+
+    def test_dict_deep_merge(self):
+        defaults = {"d": {"x": 1, "y": 2}}
+        overlay = {"d": {"y": 99, "z": 3}}
+        merged = _merge_profiles(defaults, overlay)
+        # Dicts: deep merge, overlay wins on conflicts
+        assert merged["d"] == {"x": 1, "y": 99, "z": 3}
+
+    def test_scalar_override(self):
+        defaults = {"a": 1}
+        overlay = {"a": 2}
+        merged = _merge_profiles(defaults, overlay)
+        assert merged["a"] == 2
 
     def test_overlay_adds_new_keys(self):
         defaults = {"a": 1}
@@ -74,8 +87,8 @@ class TestLoadProfile:
         profile = load_profile("_defaults")
         assert profile.profile_name == "_defaults"
         assert "GameFeatureData" in profile.export_class_reclassify
-        assert len(profile.name_prefixes) == 0  # defaults have no name prefixes
-        assert profile.semantic_types == []
+        assert profile.name_prefixes == {"GE_": "GameplayEffect"}
+        assert profile.semantic_types == ["GameplayEffect"]
 
     def test_lyra_profile(self):
         profile = load_profile("lyra")
@@ -114,7 +127,8 @@ class TestLoadProfile:
         ):
             profile = load_profile(None)
         assert profile.profile_name == "_defaults"
-        assert len(profile.data_asset_extractors) == 0
+        assert len(profile.data_asset_extractors) == 1
+        assert "GameplayEffect" in profile.data_asset_extractors
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +150,7 @@ class TestGetParserTypeConfig:
         config = get_parser_type_config(profile)
         assert "export_class_reclassify" in config
         assert "name_prefixes" in config
-        assert len(config["name_prefixes"]) == 0
+        assert config["name_prefixes"] == {"GE_": "GameplayEffect"}
 
 
 # ---------------------------------------------------------------------------

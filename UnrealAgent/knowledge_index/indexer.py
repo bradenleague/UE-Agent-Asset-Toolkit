@@ -57,6 +57,7 @@ def _get_available_memory_mb() -> int | None:
             pass
     try:
         import psutil
+
         return psutil.virtual_memory().available // (1024 * 1024)
     except ImportError:
         pass
@@ -74,13 +75,16 @@ def _get_process_rss_mb() -> int | None:
     """Get current process RSS in MB. Returns None if unavailable."""
     try:
         import psutil
+
         return psutil.Process().memory_info().rss // (1024 * 1024)
     except ImportError:
         pass
     try:
         import resource
+
         # On macOS, ru_maxrss is in bytes; on Linux, in KB
         import platform as _plat
+
         usage = resource.getrusage(resource.RUSAGE_SELF)
         if _plat.system() == "Darwin":
             return usage.ru_maxrss // (1024 * 1024)
@@ -181,6 +185,24 @@ def _extract_gameplay_tags_from_data(data: object, _depth: int = 0) -> list[str]
     if _depth == 0:
         return sorted(set(tags))
     return tags
+
+
+def _collect_and_merge_tags(
+    props: object, metadata: dict, text_parts: list[str]
+) -> None:
+    """Walk props for GameplayTags, merge into metadata and FTS text.
+
+    Centralises the 6-line pattern repeated in DataAsset and GE handlers:
+    extract tags via the walker, merge with any tags already in metadata,
+    and append a "Tags: ..." line to text_parts when appropriate.
+    """
+    walker_tags = _extract_gameplay_tags_from_data(props)
+    existing = metadata.get("gameplay_tags", [])
+    merged = sorted(set(existing) | set(walker_tags))
+    if merged:
+        metadata["gameplay_tags"] = merged
+        if not any("Tags:" in p for p in text_parts):
+            text_parts.append(f"Tags: {', '.join(merged)}")
 
 
 class AssetIndexer:
@@ -622,7 +644,8 @@ class AssetIndexer:
                 # os.walk with in-place pruning — skips excluded subtrees entirely
                 for dirpath, dirnames, filenames in os.walk(path):
                     dirnames[:] = [
-                        d for d in dirnames
+                        d
+                        for d in dirnames
                         if not any(pat in d for pat in exclude_patterns)
                     ]
                     for f in filenames:
@@ -830,7 +853,8 @@ class AssetIndexer:
             if type_filter:
                 type_filter_set = set(type_filter)
                 asset_summaries = {
-                    p: s for p, s in asset_summaries.items()
+                    p: s
+                    for p, s in asset_summaries.items()
                     if s.get("asset_type", "Unknown") in type_filter_set
                 }
                 # Recompute by_type counts after filtering
@@ -941,6 +965,42 @@ class AssetIndexer:
             if reclassified > 0:
                 print(
                     f"Reclassified {reclassified} Unknown assets to semantic types",
+                    file=sys.stderr,
+                )
+
+        # Phase 1.6: Name-prefix reclassification (all asset types, not just Unknown).
+        # GameplayEffect blueprints are classified as "Blueprint" by batch-fast because
+        # their export class is Blueprint.  Name prefixes like GE_ let us promote them
+        # to their semantic type without a full parse.
+        # Only reclassify assets whose header-only type is uncertain.
+        # Concrete types from batch-fast (Material, WidgetBlueprint, etc.)
+        # should not be overridden by name-prefix heuristics.
+        _PREFIX_RECLASS_TYPES = {"Unknown", "Blueprint"}
+
+        if self._name_prefixes:
+            prefix_reclassified = 0
+            for path, summ in asset_summaries.items():
+                old_type = summ.get("asset_type", "Unknown")
+                if old_type not in _PREFIX_RECLASS_TYPES:
+                    continue
+                name = Path(path).stem
+                for prefix, target_type in self._name_prefixes.items():
+                    if name.startswith(prefix):
+                        if old_type != target_type:
+                            summ["asset_type"] = target_type
+                            prior = stats["by_type"].get(old_type, 0)
+                            if prior <= 1:
+                                stats["by_type"].pop(old_type, None)
+                            else:
+                                stats["by_type"][old_type] = prior - 1
+                            stats["by_type"][target_type] = (
+                                stats["by_type"].get(target_type, 0) + 1
+                            )
+                            prefix_reclassified += 1
+                        break
+            if prefix_reclassified > 0:
+                print(
+                    f"Reclassified {prefix_reclassified} assets via name prefixes",
                     file=sys.stderr,
                 )
 
@@ -1367,9 +1427,11 @@ class AssetIndexer:
                         game_path, fs_path, asset_name
                     )
                 )
-            elif asset_type == "DataAsset":
+            elif asset_type in ("DataAsset", "GameplayEffect"):
                 chunks.extend(
-                    self._create_data_asset_chunks(game_path, fs_path, asset_name)
+                    self._create_data_asset_chunks(
+                        game_path, fs_path, asset_name, asset_type
+                    )
                 )
             else:
                 # Generic asset summary
@@ -1587,21 +1649,29 @@ class AssetIndexer:
         refs = self._get_asset_references(fs_path)
 
         # Create asset summary with full details for better search
-        chunks.append(
-            AssetSummary(
-                path=game_path,
-                name=asset_name,
-                asset_type="Blueprint",
-                parent_class=parent,
-                events=events,
-                functions=functions,
-                components=components,
-                variables=variables,
-                interfaces=interfaces,
-                function_count=len(functions),
-                references_out=refs,
-            )
+        summary = AssetSummary(
+            path=game_path,
+            name=asset_name,
+            asset_type="Blueprint",
+            parent_class=parent,
+            events=events,
+            functions=functions,
+            components=components,
+            variables=variables,
+            interfaces=interfaces,
+            function_count=len(functions),
+            references_out=refs,
         )
+
+        # Emit inherits_from edge for parent class
+        if parent:
+            parent_target = self._resolve_parent_to_edge_target(parent)
+            if parent_target:
+                summary.typed_references_out[parent_target] = "inherits_from"
+                if parent_target not in summary.references_out:
+                    summary.references_out.append(parent_target)
+
+        chunks.append(summary)
 
         # Create chunks for each function
         for func_elem in root.findall(".//function"):
@@ -1623,11 +1693,13 @@ class AssetIndexer:
             params_elem = func_elem.find("params")
             if params_elem is not None:
                 for p in params_elem.findall("param"):
-                    params.append({
-                        "name": p.get("name", ""),
-                        "type": p.get("type", ""),
-                        "direction": p.get("direction", "in"),
-                    })
+                    params.append(
+                        {
+                            "name": p.get("name", ""),
+                            "type": p.get("type", ""),
+                            "direction": p.get("direction", "in"),
+                        }
+                    )
 
             chunks.append(
                 BlueprintGraphDoc(
@@ -1896,6 +1968,98 @@ class AssetIndexer:
             )
         ]
 
+    # Known engine C++ base classes that will never resolve to indexed assets.
+    _ENGINE_BASE_CLASSES = frozenset(
+        {
+            "Actor",
+            "Pawn",
+            "Character",
+            "PlayerController",
+            "GameModeBase",
+            "GameMode",
+            "GameStateBase",
+            "GameState",
+            "PlayerState",
+            "UserWidget",
+            "UUserWidget",
+            "Widget",
+            "GameplayEffect",
+            "GameplayAbility",
+            "AbilitySystemComponent",
+            "AnimInstance",
+            "ActorComponent",
+            "SceneComponent",
+            "MovementComponent",
+            "CharacterMovementComponent",
+            "DataAsset",
+            "PrimaryDataAsset",
+        }
+    )
+
+    def _resolve_parent_to_edge_target(self, parent_class: str) -> str | None:
+        """Resolve a parent_class name to an edge to_id for inherits_from edges.
+
+        Resolution strategy (best-effort + fallback):
+        1. If parent_class is empty → return None (no edge).
+        2. If parent_class is a known engine C++ class → return class:<name> directly.
+        3. Attempt DB lookup: docs table, then lightweight_assets table.
+        4. If resolved → return asset:<path>.
+        5. If unresolved → return class:<name> as fallback.
+        """
+        if not parent_class or parent_class in ("Unknown", "None", "Object"):
+            return None
+
+        # /Script/Module.Class → extract class name, don't treat as asset path
+        if parent_class.startswith("/Script/"):
+            segment = parent_class.split("/")[-1]  # "Engine.Actor"
+            bare_name = segment.split(".")[-1] if "." in segment else segment
+        # Explicit /Game/ or other mount paths → use directly as asset edge target
+        elif parent_class.startswith("/"):
+            path = parent_class
+            # Strip _C suffix (Blueprint generated class)
+            if path.endswith("_C"):
+                path = path[:-2]
+            # Strip trailing asset name after dot (e.g., /Game/Foo.Foo_C → /Game/Foo)
+            if "." in path.split("/")[-1]:
+                path = path.rsplit(".", 1)[0]
+            return f"asset:{path}"
+        else:
+            bare_name = parent_class
+        # Strip _C suffix (Blueprint generated class)
+        if bare_name.endswith("_C"):
+            bare_name = bare_name[:-2]
+
+        # Known engine classes → skip DB lookup
+        if bare_name in self._ENGINE_BASE_CLASSES:
+            return f"class:{bare_name}"
+
+        # Try DB lookup by name.  Only resolve when the name is unambiguous
+        # (exactly one match); if multiple assets share the name, fall through
+        # to the class:<name> fallback to avoid attaching edges to an
+        # arbitrary duplicate.
+        conn = self.store._get_connection()
+        try:
+            # Check docs table first (semantic assets)
+            rows = conn.execute(
+                "SELECT path FROM docs WHERE name = ? AND type = 'asset_summary' LIMIT 2",
+                (bare_name,),
+            ).fetchall()
+            if len(rows) == 1:
+                return f"asset:{rows[0]['path']}"
+
+            # Check lightweight_assets table
+            rows = conn.execute(
+                "SELECT path FROM lightweight_assets WHERE name = ? LIMIT 2",
+                (bare_name,),
+            ).fetchall()
+            if len(rows) == 1:
+                return f"asset:{rows[0]['path']}"
+        finally:
+            conn.close()
+
+        # Unresolved → fallback to class:<name>
+        return f"class:{bare_name}"
+
     # Regex to extract an asset path from UE object reference strings like:
     #   "(, /ShooterCore/UI/W_Foo.W_Foo_C, )"
     #   "(/Script/Engine, GameStateBase, )"
@@ -1904,7 +2068,14 @@ class AssetIndexer:
 
     # Regex to extract a class name from UE tuple-style refs:
     #   "(/Script/Engine, GameStateBase, )" → "GameStateBase"
-    _CLASS_NAME_RE = re.compile(r"\(\s*/Script/\w+\s*,\s*(\w+)\s*,")
+    _CLASS_NAME_RE = re.compile(
+        r"\(\s*(?:,\s*)?/Script/[A-Za-z0-9_]+\s*,\s*([A-Za-z0-9_]+)\s*,"
+    )
+    # Regex for inline /Script refs:
+    #   "/Script/GameplayAbilities.GameplayEffect" → "GameplayEffect"
+    _SCRIPT_CLASS_RE = re.compile(
+        r"/Script/[A-Za-z0-9_]+\.(?P<class_name>[A-Za-z0-9_]+)"
+    )
 
     @staticmethod
     def _extract_path_from_ref(value: str) -> str | None:
@@ -1923,6 +2094,8 @@ class AssetIndexer:
         For asset paths returns the last component.
         For /Script/ tuple refs like ``(/Script/Engine, GameStateBase, )``
         returns the class name (``GameStateBase``).
+        Also handles inline /Script refs like
+        ``(, /Script/GameplayAbilities.GameplayEffect, )``.
         """
         if not value or not isinstance(value, str):
             return ""
@@ -1930,6 +2103,10 @@ class AssetIndexer:
         m = AssetIndexer._CLASS_NAME_RE.search(value)
         if m:
             return m.group(1)
+        # Then handle inline /Script/Module.Class references
+        script_match = AssetIndexer._SCRIPT_CLASS_RE.search(value)
+        if script_match:
+            return script_match.group("class_name")
         # Fall back to last path component
         path = AssetIndexer._extract_path_from_ref(value)
         if path:
@@ -2446,18 +2623,25 @@ class AssetIndexer:
         game_path: str,
         fs_path: Path,
         asset_name: str,
+        asset_type: str = "DataAsset",
     ) -> list[DocChunk]:
         """Create chunks for DataAsset assets using inspect JSON.
 
         Dispatches to per-class extractors based on the export's class name.
         Falls back to a generic extractor for unknown classes and to
         references-only for RawExport assets.
+
+        For Blueprint-subclass data assets (e.g. GameplayEffect), the main
+        export class is "Blueprint" so the actual properties live in the CDO
+        export (Default__<Name>_C).  When *asset_type* is provided and differs
+        from the export class, we use it for extractor dispatch and pull
+        properties from the CDO.
         """
         output = self._run_parser("inspect", fs_path)
         if not output:
             return [
                 self._create_generic_chunk(
-                    game_path, fs_path, asset_name, "DataAsset", {}
+                    game_path, fs_path, asset_name, asset_type, {}
                 )
             ]
 
@@ -2466,7 +2650,7 @@ class AssetIndexer:
         except json.JSONDecodeError:
             return [
                 self._create_generic_chunk(
-                    game_path, fs_path, asset_name, "DataAsset", {}
+                    game_path, fs_path, asset_name, asset_type, {}
                 )
             ]
 
@@ -2485,7 +2669,7 @@ class AssetIndexer:
         if main_export is None:
             return [
                 self._create_generic_chunk(
-                    game_path, fs_path, asset_name, "DataAsset", {}
+                    game_path, fs_path, asset_name, asset_type, {}
                 )
             ]
 
@@ -2506,11 +2690,31 @@ class AssetIndexer:
                 metadata={"class": class_name, "raw_export": True},
                 references_out=refs,
                 module=game_path.split("/")[1] if "/" in game_path else "Unknown",
-                asset_type="DataAsset",
+                asset_type=asset_type,
             )
             return [chunk]
 
-        props = main_export.get("properties", [])
+        # Blueprint-subclass data assets (e.g. GameplayEffect): the main
+        # export has class "Blueprint" and only blueprint metadata.  The
+        # actual data-asset properties live in the CDO export.
+        if class_name == "Blueprint" and asset_type != "Blueprint":
+            cdo_export = None
+            for export in exports:
+                if export.get("name", "").startswith("Default__"):
+                    cdo_export = export
+                    break
+            if cdo_export is not None:
+                props = cdo_export.get("properties", [])
+                # Also pull ParentClass from main export for inheritance
+                for prop in main_export.get("properties", []):
+                    if prop.get("name") == "ParentClass":
+                        props = [prop] + props
+                        break
+                class_name = asset_type
+            else:
+                props = main_export.get("properties", [])
+        else:
+            props = main_export.get("properties", [])
 
         # Collect all refs from property values by walking recursively
         all_refs: list[str] = []
@@ -2523,22 +2727,28 @@ class AssetIndexer:
         text_parts, metadata, typed_refs = extractor(asset_name, class_name, props)
 
         # Centralized GameplayTag collection: walk all properties
-        walker_tags = _extract_gameplay_tags_from_data(props)
-        existing_tags = metadata.get("gameplay_tags", [])
-        merged_tags = sorted(set(existing_tags) | set(walker_tags))
-        if merged_tags:
-            metadata["gameplay_tags"] = merged_tags
-            # Append to text for FTS indexing if not already present
-            if not any("Tags:" in p for p in text_parts):
-                text_parts.append(f"Tags: {', '.join(merged_tags)}")
+        _collect_and_merge_tags(props, metadata, text_parts)
 
         text = ". ".join(text_parts) + "."
         metadata["class"] = class_name
+
+        # Emit inherits_from edge if extractor set parent_class in metadata
+        parent_class = metadata.get("parent_class")
+        if parent_class:
+            parent_target = self._resolve_parent_to_edge_target(parent_class)
+            if parent_target:
+                typed_refs[parent_target] = "inherits_from"
 
         # Merge typed_ref paths into all_refs
         for ref_path in typed_refs:
             if ref_path not in all_refs:
                 all_refs.append(ref_path)
+
+        # Use the class_name as asset_type if it's a recognized semantic type
+        # (e.g., GameplayEffect), otherwise default to "DataAsset".
+        chunk_asset_type = (
+            class_name if class_name in self.SEMANTIC_TYPES else "DataAsset"
+        )
 
         chunk = DocChunk(
             doc_id=f"asset:{game_path}",
@@ -2550,7 +2760,7 @@ class AssetIndexer:
             references_out=all_refs,
             typed_references_out=typed_refs,
             module=game_path.split("/")[1] if "/" in game_path else "Unknown",
-            asset_type="DataAsset",
+            asset_type=chunk_asset_type,
         )
         return [chunk]
 
@@ -2827,6 +3037,183 @@ class AssetIndexer:
 
         metadata = {"effects_by_tag": effects_by_tag}
         typed_refs: dict[str, str] = {}
+        return text_parts, metadata, typed_refs
+
+    @data_asset_extractor("GameplayEffect")
+    def _extract_gameplay_effect(
+        self, asset_name: str, class_name: str, props: list[dict]
+    ) -> tuple[list[str], dict, dict[str, str]]:
+        """Extract GameplayEffect properties: duration, modifiers, stacking, tags."""
+        duration_policy = ""
+        modifiers: list[dict] = []
+        stacking_type = "None"
+        stack_limit = 0
+        period = 0.0
+        parent_class = ""
+        typed_refs: dict[str, str] = {}
+        tag_requirements: dict[str, list[str]] = {}
+
+        for prop in props:
+            name = prop.get("name", "")
+            val = prop.get("value", "")
+
+            if name == "DurationPolicy":
+                # Enum value: e.g., "EGameplayEffectDurationType::Instant"
+                raw = str(val)
+                if "::" in raw:
+                    duration_policy = raw.split("::")[-1]
+                else:
+                    duration_policy = raw
+
+            elif name == "Modifiers":
+                if not isinstance(val, list):
+                    continue
+                for entry in val:
+                    if not isinstance(entry, dict):
+                        continue
+                    mod: dict = {}
+                    # Attribute: often a nested struct with AttributeName
+                    attr_data = entry.get("Attribute")
+                    if isinstance(attr_data, dict):
+                        mod["attribute"] = attr_data.get(
+                            "AttributeName", attr_data.get("PropertyName", "")
+                        )
+                    elif isinstance(attr_data, str):
+                        mod["attribute"] = attr_data
+                    else:
+                        mod["attribute"] = ""
+
+                    # ModifierOp enum
+                    op_raw = str(entry.get("ModifierOp", ""))
+                    if "::" in op_raw:
+                        mod["operation"] = op_raw.split("::")[-1]
+                    else:
+                        mod["operation"] = op_raw or "Additive"
+
+                    # Magnitude — may be a struct with fixed value or scalable
+                    mag_data = entry.get("ModifierMagnitude", entry.get("Magnitude"))
+                    if isinstance(mag_data, dict):
+                        mag_type_raw = str(mag_data.get("MagnitudeCalculationType", ""))
+                        if "::" in mag_type_raw:
+                            mod["magnitude_type"] = mag_type_raw.split("::")[-1]
+                        else:
+                            mod["magnitude_type"] = mag_type_raw or "ScalableFloat"
+
+                        # Try to get the scalar value
+                        scalar = mag_data.get("ScalableFloatMagnitude")
+                        if isinstance(scalar, dict):
+                            mod["magnitude"] = scalar.get("Value", 0.0)
+                        elif isinstance(scalar, (int, float)):
+                            mod["magnitude"] = scalar
+                        else:
+                            mod["magnitude"] = mag_data.get("Value", 0.0)
+                    elif isinstance(mag_data, (int, float)):
+                        mod["magnitude_type"] = "ScalableFloat"
+                        mod["magnitude"] = mag_data
+                    else:
+                        mod["magnitude_type"] = "ScalableFloat"
+                        mod["magnitude"] = 0.0
+
+                    modifiers.append(mod)
+
+            elif name == "StackingType":
+                raw = str(val)
+                stacking_type = raw.split("::")[-1] if "::" in raw else raw
+
+            elif name == "StackLimitCount":
+                stack_limit = val if isinstance(val, int) else 0
+
+            elif name == "Period":
+                if isinstance(val, (int, float)):
+                    period = float(val)
+                elif isinstance(val, dict):
+                    period = float(val.get("Value", 0.0))
+
+            elif name in (
+                "InheritableGameplayEffectTags",
+                "InheritableOwnedTagsContainer",
+            ):
+                # Tag containers for GE-specific tags
+                tags = _extract_gameplay_tags_from_data(val)
+                if tags:
+                    tag_requirements.setdefault("inheritable", []).extend(tags)
+
+            elif name in (
+                "ApplicationTagRequirements",
+                "OngoingTagRequirements",
+                "RemovalTagRequirements",
+            ):
+                tags = _extract_gameplay_tags_from_data(val)
+                key = name.replace("TagRequirements", "").lower().rstrip("_")
+                if tags:
+                    tag_requirements.setdefault(key, []).extend(tags)
+
+            # Parent GE reference (for chained effects)
+            elif name == "ParentClass" or name == "Parent":
+                # Try asset path first (Blueprint parent refs like
+                # /Game/.../GameplayEffectParent_Damage_Basic), then
+                # fall back to class name for tuple refs like
+                # (/Script/GameplayAbilities, GameplayEffect, ).
+                parent_ref = self._extract_path_from_ref(str(val))
+                if parent_ref and not parent_ref.startswith("/Script/"):
+                    parent_class = parent_ref
+                else:
+                    class_name_ref = self._extract_class_name(str(val))
+                    if class_name_ref:
+                        parent_class = class_name_ref
+
+        # Build text
+        text_parts = [f"{asset_name} is a GameplayEffect"]
+        if duration_policy:
+            text_parts[0] += f" ({duration_policy})"
+
+        if parent_class:
+            parent_name = parent_class.split("/")[-1]
+            text_parts.append(f"Parent: {parent_name}")
+
+        if modifiers:
+            mod_descs = []
+            for m in modifiers[:5]:
+                attr = m.get("attribute", "?")
+                op = m.get("operation", "?")
+                mag = m.get("magnitude", 0.0)
+                mod_descs.append(f"{attr} {mag:+g} ({op})")
+            text_parts.append(f"Modifiers: {', '.join(mod_descs)}")
+
+        if stacking_type and stacking_type != "None":
+            text_parts.append(f"Stacking: {stacking_type} (limit {stack_limit})")
+
+        if period > 0:
+            text_parts.append(f"Period: {period}s")
+
+        # Build metadata
+        metadata: dict = {
+            "duration_policy": duration_policy or "Instant",
+            "modifiers": modifiers,
+            "stacking": {"type": stacking_type, "limit": stack_limit},
+        }
+        if period > 0:
+            metadata["period"] = period
+        if parent_class:
+            metadata["parent_class"] = parent_class
+
+        # Collect all tag requirement tags into a flat gameplay_tags list
+        all_tags: list[str] = []
+        for tag_list in tag_requirements.values():
+            all_tags.extend(tag_list)
+        if all_tags:
+            metadata["gameplay_tags"] = sorted(set(all_tags))
+            metadata["tag_requirements"] = {
+                k: sorted(set(v)) for k, v in tag_requirements.items()
+            }
+
+        # Collect asset references from props
+        all_refs: list[str] = []
+        self._collect_refs_from_value(props, all_refs)
+        for ref in all_refs:
+            if ref not in typed_refs:
+                typed_refs[ref] = "uses_asset"
+
         return text_parts, metadata, typed_refs
 
     def _extract_default_data_asset(
@@ -3245,21 +3632,29 @@ class AssetIndexer:
         ]
 
         # Create asset summary
-        chunks.append(
-            AssetSummary(
-                path=game_path,
-                name=asset_name,
-                asset_type="Blueprint",
-                parent_class=parent,
-                events=events,
-                functions=functions,
-                components=components,
-                variables=variables,
-                interfaces=interfaces,
-                function_count=len(functions),
-                references_out=refs,
-            )
+        summary = AssetSummary(
+            path=game_path,
+            name=asset_name,
+            asset_type="Blueprint",
+            parent_class=parent,
+            events=events,
+            functions=functions,
+            components=components,
+            variables=variables,
+            interfaces=interfaces,
+            function_count=len(functions),
+            references_out=refs,
         )
+
+        # Emit inherits_from edge for parent class
+        if parent:
+            parent_target = self._resolve_parent_to_edge_target(parent)
+            if parent_target:
+                summary.typed_references_out[parent_target] = "inherits_from"
+                if parent_target not in summary.references_out:
+                    summary.references_out.append(parent_target)
+
+        chunks.append(summary)
 
         # Create function chunks
         for func_data in functions_data:

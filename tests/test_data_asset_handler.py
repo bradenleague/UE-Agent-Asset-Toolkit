@@ -813,10 +813,11 @@ class TestExtractorRegistry:
 
 
 class TestGenericMode:
-    def test_defaults_profile_no_extractors(self):
-        """With _defaults profile, no project-specific extractors are loaded."""
+    def test_defaults_profile_has_engine_extractors(self):
+        """With _defaults profile, only engine-level extractors are loaded."""
         indexer = _make_indexer_with_mock(ABILITY_SET_INSPECT, profile_name="_defaults")
-        assert len(indexer._data_asset_extractors) == 0
+        assert len(indexer._data_asset_extractors) == 1
+        assert "GameplayEffect" in indexer._data_asset_extractors
 
     def test_defaults_profile_uses_default_extractor(self):
         """Unknown class falls through to default extractor with any profile."""
