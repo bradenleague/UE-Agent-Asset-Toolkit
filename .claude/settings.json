@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet *)",
+      "Bash(git *)",
+      "Bash(find *)",
+      "Bash(head *)",
+      "Bash(wc *)",
+      "Bash(cat *)",
+      "Bash(ls *)",
+      "Bash(thread *)",
+      "Bash(./AssetParser *)",
+      "Bash(bin/Release/*)",
+      "Bash(pwd)"
+    ],
+    "deny": [
+      "Bash(git push*)",
+      "Bash(git commit*)",
+      "Bash(rm -rf*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/bradenleague/dev/UE-Agent-Asset-Toolkit/.claude/hooks/rebuild-parser.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

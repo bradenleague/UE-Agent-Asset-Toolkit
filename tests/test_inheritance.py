@@ -290,6 +290,65 @@ class TestBlueprintInheritsFrom:
 
 
 # ---------------------------------------------------------------------------
+# Tests: WidgetBlueprint inherits_from edge emission
+# ---------------------------------------------------------------------------
+
+
+class TestWidgetInheritsFrom:
+    def test_batch_widget_emits_inherits_from_edge(self, tmp_store):
+        """Batch widget path emits inherits_from edges when parent is present."""
+        indexer = _make_indexer(tmp_store)
+        data = {
+            "parent": "LyraActivatableWidget",
+            "interfaces": [],
+            "events": [],
+            "variables": [],
+            "functions": [],
+            "widget_count": 0,
+            "widget_names": [],
+            "widgets": [],
+        }
+        chunks = indexer._chunks_from_widget_json(
+            data, "/Game/UI/W_TestWidget", "W_TestWidget", []
+        )
+        summary = chunks[0]
+
+        inherits_refs = {
+            k: v
+            for k, v in summary.typed_references_out.items()
+            if v == "inherits_from"
+        }
+        assert len(inherits_refs) > 0
+        target = list(inherits_refs.keys())[0]
+        assert "LyraActivatableWidget" in target
+
+    def test_batch_widget_no_parent_no_edge(self, tmp_store):
+        """Batch widget with no parent emits no inherits_from edge."""
+        indexer = _make_indexer(tmp_store)
+        data = {
+            "parent": "",
+            "interfaces": [],
+            "events": [],
+            "variables": [],
+            "functions": [],
+            "widget_count": 0,
+            "widget_names": [],
+            "widgets": [],
+        }
+        chunks = indexer._chunks_from_widget_json(
+            data, "/Game/UI/W_RootWidget", "W_RootWidget", []
+        )
+        summary = chunks[0]
+
+        inherits_refs = {
+            k: v
+            for k, v in summary.typed_references_out.items()
+            if v == "inherits_from"
+        }
+        assert len(inherits_refs) == 0
+
+
+# ---------------------------------------------------------------------------
 # Tests: find_children_of (store)
 # ---------------------------------------------------------------------------
 

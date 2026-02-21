@@ -3719,20 +3719,28 @@ class AssetIndexer:
         hierarchy_text = "\n".join(hierarchy_parts)
 
         # Asset summary with blueprint metadata
-        chunks.append(
-            AssetSummary(
-                path=game_path,
-                name=asset_name,
-                asset_type="WidgetBlueprint",
-                parent_class=parent,
-                interfaces=interfaces,
-                events=events,
-                functions=functions,
-                variables=variables,
-                widget_count=widget_count,
-                references_out=refs,
-            )
+        summary = AssetSummary(
+            path=game_path,
+            name=asset_name,
+            asset_type="WidgetBlueprint",
+            parent_class=parent,
+            interfaces=interfaces,
+            events=events,
+            functions=functions,
+            variables=variables,
+            widget_count=widget_count,
+            references_out=refs,
         )
+
+        # Emit inherits_from edge for parent class
+        if parent:
+            parent_target = self._resolve_parent_to_edge_target(parent)
+            if parent_target:
+                summary.typed_references_out[parent_target] = "inherits_from"
+                if parent_target not in summary.references_out:
+                    summary.references_out.append(parent_target)
+
+        chunks.append(summary)
 
         # Widget tree doc
         if widget_names:
