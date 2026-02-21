@@ -18,6 +18,7 @@ from typing import Optional
 @dataclass
 class UPropertyInfo:
     """Information about a UPROPERTY declaration."""
+
     name: str
     type: str
     specifiers: list[str] = field(default_factory=list)
@@ -29,6 +30,7 @@ class UPropertyInfo:
 @dataclass
 class UFunctionInfo:
     """Information about a UFUNCTION declaration."""
+
     name: str
     return_type: str
     parameters: list[str] = field(default_factory=list)
@@ -43,6 +45,7 @@ class UFunctionInfo:
 @dataclass
 class UClassInfo:
     """Information about a UCLASS declaration."""
+
     name: str
     parent: str = ""
     specifiers: list[str] = field(default_factory=list)
@@ -54,6 +57,7 @@ class UClassInfo:
 @dataclass
 class CppFileInfo:
     """Parsed information from a C++ file."""
+
     path: str
     includes: list[str] = field(default_factory=list)
     classes: list[UClassInfo] = field(default_factory=list)
@@ -71,69 +75,67 @@ class CppParser:
     """
 
     # Regex patterns for UE macros
-    # UCLASS(Blueprintable, BlueprintType) class MYGAME_API UMyClass : public AActor
+    # UCLASS(Blueprintable, Meta=(BlueprintSpawnableComponent)) class MYGAME_API UMyClass : public AActor
+    # Specifier group handles one level of nested parens for Meta=(...) etc.
     UCLASS_PATTERN = re.compile(
-        r'UCLASS\s*\(\s*([^)]*)\s*\)\s*'  # UCLASS(specifiers)
-        r'class\s+(?:(\w+_API)\s+)?'       # class [MODULE_API]
-        r'(\w+)'                            # ClassName
-        r'(?:\s*:\s*public\s+(\w+))?',      # [: public ParentClass]
-        re.MULTILINE
+        r"UCLASS\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*"  # UCLASS(specifiers w/ nested parens)
+        r"class\s+(?:(\w+_API)\s+)?"  # class [MODULE_API]
+        r"(\w+)"  # ClassName
+        r"(?:\s*:\s*public\s+(\w+))?",  # [: public ParentClass]
+        re.MULTILINE,
     )
 
     # USTRUCT(BlueprintType) struct FMyStruct
     USTRUCT_PATTERN = re.compile(
-        r'USTRUCT\s*\(\s*([^)]*)\s*\)\s*'
-        r'struct\s+(?:(\w+_API)\s+)?'
-        r'(\w+)',
-        re.MULTILINE
+        r"USTRUCT\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*"
+        r"struct\s+(?:(\w+_API)\s+)?"
+        r"(\w+)",
+        re.MULTILINE,
     )
 
     # UFUNCTION(BlueprintCallable) void MyFunction(int32 Param);
     UFUNCTION_PATTERN = re.compile(
-        r'UFUNCTION\s*\(\s*([^)]*)\s*\)\s*'  # UFUNCTION(specifiers)
-        r'(?:virtual\s+)?'                   # [virtual]
-        r'([\w:<>,\s\*&]+?)\s+'              # ReturnType
-        r'(\w+)\s*'                          # FunctionName
-        r'\(\s*([^)]*)\s*\)'                 # (Parameters)
-        r'(?:\s*const)?'                     # [const]
-        r'(?:\s*override)?',                 # [override]
-        re.MULTILINE | re.DOTALL
+        r"UFUNCTION\s*\(\s*([^)]*)\s*\)\s*"  # UFUNCTION(specifiers)
+        r"(?:virtual\s+)?"  # [virtual]
+        r"([\w:<>,\s\*&]+?)\s+"  # ReturnType
+        r"(\w+)\s*"  # FunctionName
+        r"\(\s*([^)]*)\s*\)"  # (Parameters)
+        r"(?:\s*const)?"  # [const]
+        r"(?:\s*override)?",  # [override]
+        re.MULTILINE | re.DOTALL,
     )
 
     # UPROPERTY(EditAnywhere, BlueprintReadWrite) float Health = 100.f;
     UPROPERTY_PATTERN = re.compile(
-        r'UPROPERTY\s*\(\s*([^)]*)\s*\)\s*'  # UPROPERTY(specifiers)
-        r'([\w:<>,\s\*&]+?)\s+'              # Type (including templates)
-        r'(\w+)'                              # PropertyName
-        r'(?:\s*=\s*([^;]+))?'               # [= DefaultValue]
-        r'\s*;',                              # ;
-        re.MULTILINE
+        r"UPROPERTY\s*\(\s*([^)]*)\s*\)\s*"  # UPROPERTY(specifiers)
+        r"([\w:<>,\s\*&]+?)\s+"  # Type (including templates)
+        r"(\w+)"  # PropertyName
+        r"(?:\s*=\s*([^;]+))?"  # [= DefaultValue]
+        r"\s*;",  # ;
+        re.MULTILINE,
     )
 
     # #include "MyHeader.h" or #include <system>
-    INCLUDE_PATTERN = re.compile(
-        r'#include\s+[<"]([^>"]+)[>"]',
-        re.MULTILINE
-    )
+    INCLUDE_PATTERN = re.compile(r'#include\s+[<"]([^>"]+)[>"]', re.MULTILINE)
 
     # Regular class (non-UCLASS)
     CLASS_PATTERN = re.compile(
-        r'^class\s+(?:(\w+_API)\s+)?'
-        r'(\w+)'
-        r'(?:\s*:\s*public\s+(\w+))?',
-        re.MULTILINE
+        r"^class\s+(?:(\w+_API)\s+)?"
+        r"(\w+)"
+        r"(?:\s*:\s*public\s+(\w+))?",
+        re.MULTILINE,
     )
 
     # Regular function declaration in header
     FUNCTION_PATTERN = re.compile(
-        r'^\s*(?:virtual\s+)?'
-        r'([\w:<>,\s\*&]+?)\s+'
-        r'(\w+)\s*'
-        r'\(\s*([^)]*)\s*\)'
-        r'(?:\s*const)?'
-        r'(?:\s*override)?'
-        r'\s*;',
-        re.MULTILINE
+        r"^\s*(?:virtual\s+)?"
+        r"([\w:<>,\s\*&]+?)\s+"
+        r"(\w+)\s*"
+        r"\(\s*([^)]*)\s*\)"
+        r"(?:\s*const)?"
+        r"(?:\s*override)?"
+        r"\s*;",
+        re.MULTILINE,
     )
 
     def parse_file(self, file_path: Path) -> CppFileInfo:
@@ -147,19 +149,21 @@ class CppParser:
             CppFileInfo with extracted information
         """
         try:
-            content = file_path.read_text(encoding='utf-8', errors='replace')
+            content = file_path.read_text(encoding="utf-8", errors="replace")
         except Exception:
             return CppFileInfo(path=str(file_path))
 
         # Remove single-line comments for cleaner parsing
-        content_no_comments = re.sub(r'//.*$', '', content, flags=re.MULTILINE)
+        content_no_comments = re.sub(r"//.*$", "", content, flags=re.MULTILINE)
 
         # Remove multi-line comments
-        content_no_comments = re.sub(r'/\*.*?\*/', '', content_no_comments, flags=re.DOTALL)
+        content_no_comments = re.sub(
+            r"/\*.*?\*/", "", content_no_comments, flags=re.DOTALL
+        )
 
         info = CppFileInfo(
             path=str(file_path),
-            line_count=content.count('\n') + 1,
+            line_count=content.count("\n") + 1,
         )
 
         # Extract includes
@@ -187,7 +191,9 @@ class CppParser:
             includes.append(include)
         return includes
 
-    def _extract_uclasses(self, content: str, original_content: str) -> list[UClassInfo]:
+    def _extract_uclasses(
+        self, content: str, original_content: str
+    ) -> list[UClassInfo]:
         """Extract UCLASS declarations with specifiers."""
         classes = []
 
@@ -200,14 +206,16 @@ class CppParser:
             specifiers = self._parse_specifiers(specifiers_str)
 
             # Calculate line number
-            line_number = original_content[:match.start()].count('\n') + 1
+            line_number = original_content[: match.start()].count("\n") + 1
 
-            classes.append(UClassInfo(
-                name=class_name,
-                parent=parent_class,
-                specifiers=specifiers,
-                line_number=line_number,
-            ))
+            classes.append(
+                UClassInfo(
+                    name=class_name,
+                    parent=parent_class,
+                    specifiers=specifiers,
+                    line_number=line_number,
+                )
+            )
 
         # Also check for USTRUCT
         for match in self.USTRUCT_PATTERN.finditer(content):
@@ -215,17 +223,21 @@ class CppParser:
             struct_name = match.group(3)
 
             specifiers = self._parse_specifiers(specifiers_str)
-            line_number = original_content[:match.start()].count('\n') + 1
+            line_number = original_content[: match.start()].count("\n") + 1
 
-            classes.append(UClassInfo(
-                name=struct_name,
-                specifiers=specifiers,
-                line_number=line_number,
-            ))
+            classes.append(
+                UClassInfo(
+                    name=struct_name,
+                    specifiers=specifiers,
+                    line_number=line_number,
+                )
+            )
 
         return classes
 
-    def _extract_ufunctions(self, content: str, original_content: str) -> list[UFunctionInfo]:
+    def _extract_ufunctions(
+        self, content: str, original_content: str
+    ) -> list[UFunctionInfo]:
         """Extract UFUNCTION declarations."""
         functions = []
 
@@ -242,28 +254,34 @@ class CppParser:
             parameters = self._parse_parameters(params_str)
 
             # Calculate line number
-            line_number = original_content[:match.start()].count('\n') + 1
+            line_number = original_content[: match.start()].count("\n") + 1
 
             # Check for modifiers
             match_text = match.group(0)
-            is_virtual = 'virtual' in match_text
-            is_override = 'override' in match_text
-            is_const = match_text.rstrip().endswith('const') or 'const override' in match_text
+            is_virtual = "virtual" in match_text
+            is_override = "override" in match_text
+            is_const = (
+                match_text.rstrip().endswith("const") or "const override" in match_text
+            )
 
-            functions.append(UFunctionInfo(
-                name=func_name,
-                return_type=return_type,
-                parameters=parameters,
-                specifiers=specifiers,
-                line_number=line_number,
-                is_virtual=is_virtual,
-                is_override=is_override,
-                is_const=is_const,
-            ))
+            functions.append(
+                UFunctionInfo(
+                    name=func_name,
+                    return_type=return_type,
+                    parameters=parameters,
+                    specifiers=specifiers,
+                    line_number=line_number,
+                    is_virtual=is_virtual,
+                    is_override=is_override,
+                    is_const=is_const,
+                )
+            )
 
         return functions
 
-    def _extract_uproperties(self, content: str, original_content: str) -> list[UPropertyInfo]:
+    def _extract_uproperties(
+        self, content: str, original_content: str
+    ) -> list[UPropertyInfo]:
         """Extract UPROPERTY declarations."""
         properties = []
 
@@ -277,15 +295,17 @@ class CppParser:
             specifiers = self._parse_specifiers(specifiers_str)
 
             # Calculate line number
-            line_number = original_content[:match.start()].count('\n') + 1
+            line_number = original_content[: match.start()].count("\n") + 1
 
-            properties.append(UPropertyInfo(
-                name=prop_name,
-                type=prop_type,
-                specifiers=specifiers,
-                default_value=default_value,
-                line_number=line_number,
-            ))
+            properties.append(
+                UPropertyInfo(
+                    name=prop_name,
+                    type=prop_type,
+                    specifiers=specifiers,
+                    default_value=default_value,
+                    line_number=line_number,
+                )
+            )
 
         return properties
 
@@ -312,7 +332,9 @@ class CppParser:
                 if prop.name not in owner.properties:
                     owner.properties.append(prop.name)
 
-    def _find_owner_class(self, line_number: int, sorted_classes: list[UClassInfo]) -> Optional[UClassInfo]:
+    def _find_owner_class(
+        self, line_number: int, sorted_classes: list[UClassInfo]
+    ) -> Optional[UClassInfo]:
         """Find the class that owns a member at the given line number."""
         owner = None
         for cls in sorted_classes:
@@ -332,13 +354,13 @@ class CppParser:
         depth = 0
 
         for char in specifiers_str:
-            if char == '(':
+            if char == "(":
                 depth += 1
                 current += char
-            elif char == ')':
+            elif char == ")":
                 depth -= 1
                 current += char
-            elif char == ',' and depth == 0:
+            elif char == "," and depth == 0:
                 spec = current.strip()
                 if spec:
                     specifiers.append(spec)
@@ -363,13 +385,13 @@ class CppParser:
         depth = 0
 
         for char in params_str:
-            if char in '(<':
+            if char in "(<":
                 depth += 1
                 current += char
-            elif char in ')>':
+            elif char in ")>":
                 depth -= 1
                 current += char
-            elif char == ',' and depth == 0:
+            elif char == "," and depth == 0:
                 param = current.strip()
                 if param:
                     params.append(param)

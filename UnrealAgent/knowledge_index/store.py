@@ -1922,6 +1922,30 @@ class KnowledgeStore:
         finally:
             conn.close()
 
+    @staticmethod
+    def _probe_class_name(class_name: str) -> list[str]:
+        """Generate UE prefix variants for a class name.
+
+        Strips _C suffix, then returns [bare_name, Uname, Aname, ...] for
+        probing cpp_class_index.  Only treats the name as already-prefixed
+        when it starts with a known UE prefix letter AND the second char is
+        uppercase (UE convention: AActor, UObject — not Actor, Event).
+        """
+        if class_name.endswith("_C"):
+            class_name = class_name[:-2]
+
+        candidates = [class_name]
+        # UE prefixed names always have uppercase second char (AActor, UObject, FVector)
+        already_prefixed = (
+            len(class_name) >= 2
+            and class_name[0] in ("U", "A", "F", "I", "S", "E", "T")
+            and class_name[1].isupper()
+        )
+        if class_name and not already_prefixed:
+            for prefix in ("U", "A", "F", "I", "S", "E", "T"):
+                candidates.append(prefix + class_name)
+        return candidates
+
     def resolve_cpp_class(self, class_name: str) -> Optional[str]:
         """
         Resolve a C++ class name to its doc_id.
@@ -1960,9 +1984,7 @@ class KnowledgeStore:
         """
         # Extract class name from /Script/Module.ClassName format
         if script_ref.startswith("/Script/"):
-            # Remove /Script/ prefix
             remainder = script_ref[8:]  # len("/Script/") = 8
-            # Take the part after the dot (if any)
             if "." in remainder:
                 class_name = remainder.split(".")[-1]
             else:
@@ -1970,17 +1992,8 @@ class KnowledgeStore:
         else:
             class_name = script_ref
 
-        # Strip _C suffix (Blueprint generated class suffix)
-        if class_name.endswith("_C"):
-            class_name = class_name[:-2]
-
-        candidate_names = [class_name]
-
-        # Many Unreal refs omit U/A/F/I prefixes (e.g. LyraHealthComponent),
-        # while C++ declarations include them. Probe common prefixes.
-        if class_name and class_name[0] not in ("U", "A", "F", "I", "S", "E", "T"):
-            for prefix in ("U", "A", "F", "I", "S", "E", "T"):
-                candidate_names.append(prefix + class_name)
+        candidate_names = self._probe_class_name(class_name)
+        bare_name = candidate_names[0]  # _C-stripped bare name
 
         # Reuse current connection when available to avoid nested DB locks
         # during batch write transactions.
@@ -1994,7 +2007,7 @@ class KnowledgeStore:
                 return row["doc_id"]
 
             # Fallback to source file doc when class extraction missed the UCLASS.
-            source_candidates = (f"{class_name}.h", f"{class_name}.cpp")
+            source_candidates = (f"{bare_name}.h", f"{bare_name}.cpp")
             row = conn.execute(
                 "SELECT doc_id FROM docs WHERE type = 'source_file' AND name IN (?, ?) LIMIT 1",
                 source_candidates,
@@ -2006,7 +2019,7 @@ class KnowledgeStore:
             if resolved:
                 return resolved
 
-        source_doc = self._resolve_source_file_doc(class_name)
+        source_doc = self._resolve_source_file_doc(bare_name)
         return source_doc
 
     def _resolve_source_file_doc(self, base_name: str) -> Optional[str]:
@@ -2020,6 +2033,59 @@ class KnowledgeStore:
             return row["doc_id"] if row else None
         finally:
             conn.close()
+
+    def resolve_cpp_sources(self, class_names: list[str]) -> dict[str, dict]:
+        """Batch-resolve C++ class names to source paths.
+
+        Args:
+            class_names: List of class names (with or without U/A/F prefix)
+
+        Returns:
+            Dict mapping input class name -> {class_name, doc_id, source_path}
+            Only contains entries that resolved successfully.
+        """
+        if not class_names:
+            return {}
+
+        # Build candidate -> set of original inputs mapping
+        candidate_to_inputs: dict[str, list[str]] = {}
+        for name in class_names:
+            for candidate in self._probe_class_name(name):
+                candidate_to_inputs.setdefault(candidate, []).append(name)
+
+        all_candidates = list(candidate_to_inputs.keys())
+        placeholders = ",".join("?" * len(all_candidates))
+
+        conn = self._get_connection()
+        try:
+            rows = conn.execute(
+                f"SELECT class_name, doc_id, source_path FROM cpp_class_index "
+                f"WHERE class_name IN ({placeholders})",
+                all_candidates,
+            ).fetchall()
+
+            result: dict[str, dict] = {}
+            for row in rows:
+                hit = {
+                    "class_name": row["class_name"],
+                    "doc_id": row["doc_id"],
+                    "source_path": row["source_path"],
+                }
+                for input_name in candidate_to_inputs.get(row["class_name"], []):
+                    if input_name not in result:
+                        result[input_name] = hit
+            return result
+        finally:
+            conn.close()
+
+    def resolve_cpp_source(self, class_name: str) -> Optional[dict]:
+        """Resolve a single C++ class name to its source path.
+
+        Returns:
+            {class_name, doc_id, source_path} or None if not found.
+        """
+        result = self.resolve_cpp_sources([class_name])
+        return result.get(class_name)
 
     def get_cpp_class_stats(self) -> dict:
         """Get statistics about the C++ class index."""

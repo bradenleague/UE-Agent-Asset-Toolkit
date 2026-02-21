@@ -2,9 +2,24 @@ import json
 import re
 from typing import Optional
 
-from .retriever import get_store, get_retriever_instance, get_embedder_error, enrich_results_with_full_docs, build_semantic_snippet
-from .reranker import result_quality_key, apply_semantic_reranking, normalize_output_scores
-from .trace import extract_trace_target, resolve_asset_paths_by_token, build_asset_system_trace, should_try_tag_search
+from .retriever import (
+    get_store,
+    get_retriever_instance,
+    get_embedder_error,
+    enrich_results_with_full_docs,
+    build_semantic_snippet,
+)
+from .reranker import (
+    result_quality_key,
+    apply_semantic_reranking,
+    normalize_output_scores,
+)
+from .trace import (
+    extract_trace_target,
+    resolve_asset_paths_by_token,
+    build_asset_system_trace,
+    should_try_tag_search,
+)
 
 _INHERITS_RE = re.compile(
     r"(?:what\s+)?(?:inherits?\s+from|subclass(?:es)?\s+of|children\s+of|class(?:es)?\s+extending)\s+(.+)",
@@ -116,8 +131,23 @@ def unreal_search(
         elif any(
             query.upper().startswith(p)
             for p in [
-                "BP_", "B_", "ABP_", "WBP_", "W_", "M_", "MI_", "MF_",
-                "DT_", "DA_", "SK_", "SM_", "T_", "A_", "GA_", "GE_", "GCN_",
+                "BP_",
+                "B_",
+                "ABP_",
+                "WBP_",
+                "W_",
+                "M_",
+                "MI_",
+                "MF_",
+                "DT_",
+                "DA_",
+                "SK_",
+                "SM_",
+                "T_",
+                "A_",
+                "GA_",
+                "GE_",
+                "GCN_",
             ]
         ):
             query_mode = "name"
@@ -384,6 +414,24 @@ def unreal_search(
                         )
             finally:
                 conn.close()
+
+        # Fallback: probe cpp_class_index when FTS/lightweight missed C++ classes
+        if not any(
+            (r.get("type") or "").lower() in ("cppclass", "cpp_class") for r in results
+        ):
+            cpp_info = store.resolve_cpp_source(query)
+            if cpp_info:
+                doc = store.get_doc(cpp_info["doc_id"])
+                if doc:
+                    results.append(
+                        {
+                            "path": doc.path,
+                            "name": doc.name,
+                            "type": doc.asset_type or doc.type,
+                            "snippet": doc.text[:200] if doc.text else "",
+                            "score": 1.0,
+                        }
+                    )
 
     else:
         query_words = query.strip().split()

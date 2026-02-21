@@ -27,7 +27,6 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger("unreal-asset-tools")
 
@@ -49,12 +48,89 @@ from core import (
 )
 from assets import inspect_asset as _raw_inspect
 from search import unreal_search, get_store, get_retriever_instance
-from search.engine import _normalize_ue_path
-from search.trace import should_try_tag_search as _should_try_tag_search
-from search.retriever import enrich_results_with_full_docs as _enrich_results_with_full_docs
+from search.engine import _normalize_ue_path  # noqa: F401
+from search.trace import should_try_tag_search as _should_try_tag_search  # noqa: F401
+from search.retriever import (
+    enrich_results_with_full_docs as _enrich_results_with_full_docs,
+)  # noqa: F401
+
+# Keep re-exports accessible — downstream tests import these from mcp_server
+__all__ = [
+    "_normalize_ue_path",
+    "_should_try_tag_search",
+    "_enrich_results_with_full_docs",
+]
+
+# Regex patterns for extracting C++ class names from Blueprint XML
+_RE_PARENT = re.compile(r"<parent>([^<]+)</parent>")
+_RE_COMPONENT_TYPE = re.compile(r'<component\s+type="([^"]+)"')
 
 # Create the MCP server
 server = Server("unreal-asset-tools")
+
+
+def _get_project_root() -> str:
+    """Derive the project root directory from config.json project_path."""
+    if PROJECT:
+        return os.path.dirname(PROJECT)
+    return ""
+
+
+def _enrich_blueprint_xml(xml_data: str) -> str:
+    """Append <cpp-sources> block to Blueprint XML with resolved source paths.
+
+    Extracts parent class and component type names, batch-resolves them via
+    cpp_class_index, and appends source path hints for the agent.
+    Returns the original XML unchanged if no classes resolve or if the XML
+    is not a <blueprint>.
+    """
+    stripped = xml_data.strip()
+    if not stripped.startswith("<blueprint"):
+        return xml_data
+
+    # Collect class names from <parent> and <component type="...">
+    class_names: list[str] = []
+    parent_match = _RE_PARENT.search(xml_data)
+    if parent_match:
+        class_names.append(parent_match.group(1))
+    for m in _RE_COMPONENT_TYPE.finditer(xml_data):
+        name = m.group(1)
+        if name not in class_names:
+            class_names.append(name)
+
+    if not class_names:
+        return xml_data
+
+    try:
+        store = get_store()
+        resolved = store.resolve_cpp_sources(class_names)
+    except Exception:
+        return xml_data
+
+    if not resolved:
+        return xml_data
+
+    from xml.sax.saxutils import quoteattr
+
+    project_root = _get_project_root()
+    lines = [f"<cpp-sources project-root={quoteattr(project_root)}>"]
+    for input_name, info in resolved.items():
+        path = info.get("source_path")
+        if not path:
+            continue
+        lines.append(
+            f"  <source class={quoteattr(input_name)} path={quoteattr(path)} />"
+        )
+    lines.append("</cpp-sources>")
+    cpp_block = "\n".join(lines)
+
+    # Insert before closing </blueprint> tag
+    close_tag = "</blueprint>"
+    idx = xml_data.rfind(close_tag)
+    if idx != -1:
+        return xml_data[:idx] + cpp_block + "\n" + xml_data[idx:]
+    else:
+        return xml_data + "\n" + cpp_block
 
 
 # =============================================================================
@@ -172,11 +248,12 @@ def inspect_asset(
             raw_stripped = raw_result.strip()
 
             if raw_stripped.startswith("<"):
-                # Return as structured XML result
+                # Enrich Blueprint XML with C++ source paths
+                enriched = _enrich_blueprint_xml(raw_result)
                 result = {
                     "path": asset_path,
                     "format": "xml",
-                    "data": raw_result,
+                    "data": enriched,
                 }
             elif raw_stripped.startswith("{"):
                 # JSON result
@@ -196,6 +273,13 @@ def inspect_asset(
         if search_result:
             result["matched_from"] = path_or_query
             result["match_score"] = search_result.get("score", 1.0)
+
+        # Include project_root when result contains source paths
+        project_root = _get_project_root()
+        if project_root:
+            data = result.get("data", "")
+            if isinstance(data, str) and "<cpp-sources" in data:
+                result["project_root"] = project_root
 
         return result
 
@@ -311,6 +395,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 asset_types=arguments.get("asset_types"),
                 limit=arguments.get("limit", 20),
             )
+            # Add project_root when results contain source file paths
+            project_root = _get_project_root()
+            if project_root and any(
+                (r.get("path") or "").startswith(("Source/", "Plugins/"))
+                for r in result.get("results", [])
+            ):
+                result["project_root"] = project_root
         elif name == "inspect_asset":
             result = inspect_asset(
                 path_or_query=arguments.get("path_or_query", ""),
