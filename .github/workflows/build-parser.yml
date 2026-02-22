@@ -1,0 +1,53 @@
+name: Build AssetParser
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "AssetParser/**"
+      - "UAssetAPI/**"
+  pull_request:
+    paths:
+      - "AssetParser/**"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+          - os: windows-latest
+            rid: win-x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build UAssetAPI
+        run: dotnet build UAssetAPI/UAssetAPI.sln -c Release
+
+      - name: Publish AssetParser
+        run: >
+          dotnet publish AssetParser/AssetParser.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -o publish/${{ matrix.rid }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AssetParser-${{ matrix.rid }}
+          path: publish/${{ matrix.rid }}

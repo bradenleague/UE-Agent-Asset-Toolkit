@@ -4,7 +4,9 @@ import sqlite3
 
 import pytest
 
-from UnrealAgent.mcp_server import _enrich_results_with_full_docs
+from unreal_agent.search.retriever import (
+    enrich_results_with_full_docs as _enrich_results_with_full_docs,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +219,7 @@ class TestEnrichUnit:
 # Integration tests — real Lyra DB
 # ---------------------------------------------------------------------------
 
-_LYRA_DB = "UnrealAgent/data/lyrastartergame_57.db"
+_LYRA_DB = "unreal_agent/data/lyrastartergame_57.db"
 
 
 def _lyra_db_available() -> bool:
@@ -234,7 +236,7 @@ skip_no_db = pytest.mark.skipif(
 
 def _get_real_store():
     """Create a KnowledgeStore pointing at the real Lyra DB (read-only use)."""
-    from UnrealAgent.knowledge_index.store import KnowledgeStore
+    from unreal_agent.knowledge_index.store import KnowledgeStore
 
     return KnowledgeStore(_LYRA_DB)
 
@@ -243,7 +245,7 @@ def _get_real_store():
 class TestEnrichIntegration:
     def test_name_search_narrow_has_full_detail(self):
         """Name search for W_Healthbar → detail='full', content present."""
-        from UnrealAgent.mcp_server import unreal_search
+        from unreal_agent.mcp_server import unreal_search
 
         result = unreal_search("W_Healthbar", search_type="name")
         assert result["detail"] == "full"
@@ -253,7 +255,7 @@ class TestEnrichIntegration:
 
     def test_name_search_prefix_broad_has_summary(self):
         """Prefix search for B_ → detail='summary' (many results)."""
-        from UnrealAgent.mcp_server import unreal_search
+        from unreal_agent.mcp_server import unreal_search
 
         result = unreal_search("B_", search_type="name")
         # B_ prefix returns many results — still gets enriched because name mode always enriches
@@ -262,14 +264,14 @@ class TestEnrichIntegration:
 
     def test_semantic_narrow_has_full_detail(self):
         """Semantic search with limit=2 → detail='full'."""
-        from UnrealAgent.mcp_server import unreal_search
+        from unreal_agent.mcp_server import unreal_search
 
         result = unreal_search("healthbar widget", search_type="semantic", limit=2)
         assert result["detail"] == "full"
 
     def test_semantic_broad_has_summary(self):
         """Broad semantic search → detail='summary' (many results)."""
-        from UnrealAgent.mcp_server import unreal_search
+        from unreal_agent.mcp_server import unreal_search
 
         result = unreal_search("widget", search_type="semantic", limit=20)
         # With limit=20 and a broad query, expect >3 results → summary
@@ -281,7 +283,7 @@ class TestEnrichIntegration:
 
     def test_enriched_content_longer_than_snippet(self):
         """Enriched content should be longer than the truncated snippet."""
-        from UnrealAgent.mcp_server import unreal_search
+        from unreal_agent.mcp_server import unreal_search
 
         result = unreal_search("W_Healthbar", search_type="name")
         for r in result["results"]:

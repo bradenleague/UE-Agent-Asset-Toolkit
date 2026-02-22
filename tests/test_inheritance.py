@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from UnrealAgent.knowledge_index.indexer import AssetIndexer
-from UnrealAgent.knowledge_index.store import KnowledgeStore
-from UnrealAgent.knowledge_index.schemas import DocChunk
+from unreal_agent.knowledge_index.indexer import AssetIndexer
+from unreal_agent.knowledge_index.store import KnowledgeStore
+from unreal_agent.knowledge_index.schemas import DocChunk
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +25,7 @@ def tmp_store(tmp_path):
 
 def _make_indexer(store, profile_name="lyra"):
     """Create an AssetIndexer with mocked parser for testing."""
-    from UnrealAgent.project_profile import load_profile
+    from unreal_agent.project_profile import load_profile
 
     indexer = AssetIndexer.__new__(AssetIndexer)
     indexer.store = store
@@ -48,7 +48,7 @@ def _make_indexer_with_mock(
     store=None,
 ):
     """Create an AssetIndexer with mocked parser for DataAsset testing."""
-    from UnrealAgent.project_profile import load_profile
+    from unreal_agent.project_profile import load_profile
 
     indexer = AssetIndexer.__new__(AssetIndexer)
     indexer.store = store or MagicMock()
@@ -448,22 +448,22 @@ class TestFindChildrenOf:
 
 class TestNormalizeUePath:
     def test_object_style_path(self):
-        from UnrealAgent.mcp_server import _normalize_ue_path
+        from unreal_agent.search.engine import _normalize_ue_path
 
         assert _normalize_ue_path("/Game/GE/GE_Base.GE_Base_C") == "/Game/GE/GE_Base"
 
     def test_path_with_c_suffix_only(self):
-        from UnrealAgent.mcp_server import _normalize_ue_path
+        from unreal_agent.search.engine import _normalize_ue_path
 
         assert _normalize_ue_path("/Game/GE/GE_Base_C") == "/Game/GE/GE_Base"
 
     def test_clean_path_unchanged(self):
-        from UnrealAgent.mcp_server import _normalize_ue_path
+        from unreal_agent.search.engine import _normalize_ue_path
 
         assert _normalize_ue_path("/Game/GE/GE_Base") == "/Game/GE/GE_Base"
 
     def test_non_game_mount_path(self):
-        from UnrealAgent.mcp_server import _normalize_ue_path
+        from unreal_agent.search.engine import _normalize_ue_path
 
         assert (
             _normalize_ue_path("/ShooterCore/GE/GE_Damage.GE_Damage_C")
@@ -471,18 +471,18 @@ class TestNormalizeUePath:
         )
 
     def test_non_path_string_unchanged(self):
-        from UnrealAgent.mcp_server import _normalize_ue_path
+        from unreal_agent.search.engine import _normalize_ue_path
 
         assert _normalize_ue_path("GameplayEffect") == "GameplayEffect"
 
     def test_empty_string(self):
-        from UnrealAgent.mcp_server import _normalize_ue_path
+        from unreal_agent.search.engine import _normalize_ue_path
 
         assert _normalize_ue_path("") == ""
 
     def test_script_path_preserved(self):
         """Dot in /Script/ paths is module.class separator — must not be stripped."""
-        from UnrealAgent.mcp_server import _normalize_ue_path
+        from unreal_agent.search.engine import _normalize_ue_path
 
         assert (
             _normalize_ue_path("/Script/GameplayAbilities.GameplayEffect")
@@ -534,10 +534,12 @@ class TestInheritsQueryPrefixHandling:
         names = {c["name"] for c in good}
         assert "GE_Heal" in names
 
-    def test_unreal_search_normalizes_embedded_class_prefix(self, tmp_store, monkeypatch):
+    def test_unreal_search_normalizes_embedded_class_prefix(
+        self, tmp_store, monkeypatch
+    ):
         """Natural-language inherits query with class: token should find children."""
-        from UnrealAgent import mcp_server
-        from search import engine as search_engine
+        from unreal_agent import mcp_server
+        from unreal_agent.search import engine as search_engine
 
         self._setup_inheritance_tree(tmp_store)
         monkeypatch.setattr(search_engine, "get_store", lambda: tmp_store)
@@ -549,10 +551,12 @@ class TestInheritsQueryPrefixHandling:
         names = {r["name"] for r in result["results"]}
         assert "GE_Heal" in names
 
-    def test_unreal_search_script_target_uses_class_segment(self, tmp_store, monkeypatch):
+    def test_unreal_search_script_target_uses_class_segment(
+        self, tmp_store, monkeypatch
+    ):
         """Inherits query with /Script/Module.Class should use the class segment."""
-        from UnrealAgent import mcp_server
-        from search import engine as search_engine
+        from unreal_agent import mcp_server
+        from unreal_agent.search import engine as search_engine
 
         self._setup_inheritance_tree(tmp_store)
         monkeypatch.setattr(search_engine, "get_store", lambda: tmp_store)

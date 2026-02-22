@@ -37,6 +37,7 @@ cd UE-Agent-Asset-Toolkit
 python -m venv .venv
 source .venv/bin/activate  # macOS/Linux
 # .venv\Scripts\activate   # Windows
+pip install -e .
 ```
 
 Then run setup **with the user's project path** (from step 0):
@@ -45,7 +46,7 @@ Then run setup **with the user's project path** (from step 0):
 python setup.py /path/to/Project.uproject
 ```
 
-This builds UAssetAPI and AssetParser, installs Python deps, and registers the project. If the user hasn't given you a project path yet, **ask for it** — don't run `setup.py` without one unless the user explicitly just wants to build the parser.
+This builds UAssetAPI and AssetParser and registers the project. If the user hasn't given you a project path yet, **ask for it** — don't run `setup.py` without one unless the user explicitly just wants to build the parser.
 
 ### 3. Find the UE Project (only if the user doesn't know the path)
 
@@ -71,7 +72,7 @@ Present the results and let the user pick.
 ### 4. Run Initial Index
 
 ```bash
-python index.py --plugins
+unreal-agent-toolkit --plugins
 ```
 
 This indexes all assets with engine defaults. The `--plugins` flag includes Game Feature plugin content. For large projects this takes a few minutes.
@@ -79,13 +80,13 @@ This indexes all assets with engine defaults. The `--plugins` flag includes Game
 If the user only cares about a specific area (e.g., "I'm working on the UI system"), consider a targeted index instead:
 
 ```bash
-python index.py --path UI --plugins
+unreal-agent-toolkit --path UI --plugins
 ```
 
 ### 5. Check Results
 
 ```bash
-python index.py --status
+unreal-agent-toolkit --status
 ```
 
 Report the stats to the user: how many assets found, how many semantic docs, how many lightweight.
@@ -99,13 +100,12 @@ The toolkit is only useful once it's connected to the user's AI tool. Ask which 
 {
   "mcpServers": {
     "unreal": {
-      "command": "/absolute/path/to/.venv/bin/python",
-      "args": ["/absolute/path/to/UnrealAgent/mcp_server.py"]
+      "command": "unreal-agent-mcp"
     }
   }
 }
 ```
-The user needs to restart Claude Code for the MCP server to load.
+The user needs to restart Claude Code for the MCP server to load. If the entry point isn't on PATH, use the full path: `/absolute/path/to/.venv/bin/unreal-agent-mcp`.
 
 **Claude Desktop** — add to the app config:
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -115,8 +115,7 @@ The user needs to restart Claude Code for the MCP server to load.
 {
   "mcpServers": {
     "unreal": {
-      "command": "python",
-      "args": ["/absolute/path/to/UnrealAgent/mcp_server.py"]
+      "command": "unreal-agent-mcp"
     }
   }
 }
@@ -126,7 +125,7 @@ The user needs to restart Claude Code for the MCP server to load.
 
 After the initial index, analyze the database to create a project profile that improves classification of project-specific types. See [AGENT_PROFILE_GUIDE.md](AGENT_PROFILE_GUIDE.md) for the full reference.
 
-Quick discovery queries against `UnrealAgent/data/<project_name>.db`:
+Quick discovery queries against `unreal_agent/data/<project_name>.db`:
 
 ```sql
 -- What types were found?
@@ -143,10 +142,10 @@ FROM lightweight_assets WHERE INSTR(name, '_') > 1
 GROUP BY prefix HAVING cnt >= 3 ORDER BY cnt DESC LIMIT 20;
 ```
 
-Use the results to create `UnrealAgent/profiles/<project_name>.json`. Start from the template in AGENT_PROFILE_GUIDE.md. Then add `"profile": "<project_name>"` to the project entry in `UnrealAgent/config.json` and re-index:
+Use the results to create `unreal_agent/profiles/<project_name>.json`. Start from the template in AGENT_PROFILE_GUIDE.md. Then add `"profile": "<project_name>"` to the project entry in `unreal_agent/config.json` and re-index:
 
 ```bash
-python index.py --plugins --force
+unreal-agent-toolkit --plugins --force
 ```
 
 ## Build Commands
@@ -161,39 +160,43 @@ python index.py --plugins --force
 
 | Command | Description |
 |---------|-------------|
-| `python index.py add <path>` | Register a `.uproject` and set it active |
-| `python index.py use <name>` | Switch active project |
-| `python index.py list` | Show all configured projects |
-| `python index.py --plugins` | Full index with plugin content |
-| `python index.py --plugins --force` | Re-index everything (after profile changes) |
-| `python index.py --profile quick --plugins` | Fast index of high-value types only |
-| `python index.py --source` | Index C++ source files |
-| `python index.py --status` | Show index statistics |
-| `python index.py --embed` | Index with vector embeddings (needs `sentence-transformers`) |
+| `unreal-agent-toolkit add <path>` | Register a `.uproject` and set it active |
+| `unreal-agent-toolkit use <name>` | Switch active project |
+| `unreal-agent-toolkit list` | Show all configured projects |
+| `unreal-agent-toolkit --plugins` | Full index with plugin content |
+| `unreal-agent-toolkit --plugins --force` | Re-index everything (after profile changes) |
+| `unreal-agent-toolkit --profile quick --plugins` | Fast index of high-value types only |
+| `unreal-agent-toolkit --source` | Index C++ source files |
+| `unreal-agent-toolkit --status` | Show index statistics |
+| `unreal-agent-toolkit --embed` | Index with vector embeddings (needs `sentence-transformers`) |
 
 ## Testing
 
 ```bash
-cd UnrealAgent && python -m pytest ../tests/ -v
+pytest tests/ -v
 ```
 
-45 tests covering the profile system, data asset handlers, GameplayTag extraction, and fuzzy matching.
+227 tests covering search, indexing, profiles, data asset handlers, GameplayTag extraction, CLI, and more.
 
 ## Project Structure
 
 ```
-setup.py / setup.bat / setup.sh     # Build toolkit
-index.py / index.bat / index.sh     # Index management CLI
+pyproject.toml                       # Python package config
+setup.py / setup.bat / setup.sh      # Build toolkit
+index.py                             # Backwards-compatible CLI shim
 
 AssetParser/                         # C# binary .uasset parser
   Program.cs                         # Supports --type-config for project-specific types
 
-UnrealAgent/
+unreal_agent/                        # Python package
+  __init__.py                        # Package version
   mcp_server.py                      # MCP server (unreal_search, inspect_asset)
+  cli.py                             # Index management CLI
   tools.py                           # Backend implementations
+  parser_resolver.py                 # AssetParser binary resolution
+  parser_download.py                 # GitHub Releases download fallback
   project_profile.py                 # Profile loading and merging
   config.json                        # Active project config (user-edited)
-  config.example.json                # Template
 
   profiles/
     _defaults.json                   # Engine-level type config (generic)
@@ -203,8 +206,12 @@ UnrealAgent/
   knowledge_index/
     indexer.py                       # Asset indexing pipeline
     store.py                         # SQLite schema and queries
-    retriever.py                     # FTS5 + vector search
     schemas.py                       # DocChunk types
+
+  search/
+    engine.py                        # FTS5 + vector search
+    retriever.py                     # Result enrichment
+    trace.py                         # System trace builder
 
   data/
     <project_name>.db                # Per-project SQLite database
@@ -214,9 +221,10 @@ UnrealAgent/
 
 - **Profile system**: Project-specific types are configured in JSON profiles, not hardcoded. `_defaults.json` provides engine-level types, `<project>.json` overrides per-key. See [AGENT_PROFILE_GUIDE.md](AGENT_PROFILE_GUIDE.md).
 - **Two-tier parsing**: C# AssetParser does fast binary parsing (~100ms/asset). Python indexer builds the semantic index on top.
-- **Multi-project**: Each project gets its own isolated database. Switch with `python index.py use <name>`.
+- **Multi-project**: Each project gets its own isolated database. Switch with `unreal-agent-toolkit use <name>`.
 - **Typed edges**: The index stores reference edges with types: `uses_asset`, `registers_widget`, `adds_component`, `maps_input`, `uses_layout`, `targets_actor`.
 - **`references` is a reserved SQL word**: When querying `lightweight_assets`, use `la."references"` (quoted).
+- **Mutable-global config pattern**: Function-level re-imports like `from unreal_agent.core.config import PROJECT` exist because `PROJECT` changes at runtime when switching projects. Do not move these to top-level imports.
 
 ## Platform Notes
 

@@ -1,5 +1,9 @@
 # UE Asset Toolkit
 
+[![Tests](https://github.com/bradenleague/UE-Agent-Asset-Toolkit/actions/workflows/test.yml/badge.svg)](https://github.com/bradenleague/UE-Agent-Asset-Toolkit/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/unreal-agent-toolkit)](https://pypi.org/project/unreal-agent-toolkit/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 AI-powered Unreal Engine asset inspection toolkit. Analyze Blueprints, Materials, Widgets, DataTables, and more without launching the Editor.
 
 ## Features
@@ -15,6 +19,38 @@ AI-powered Unreal Engine asset inspection toolkit. Analyze Blueprints, Materials
 - .NET 8 SDK or later (for AssetParser)
 - Python 3.10+ (for indexer and MCP server)
 
+## Installation
+
+### Recommended: Clone + editable install
+
+```bash
+git clone --recursive https://github.com/bradenleague/UE-Agent-Asset-Toolkit
+cd UE-Agent-Asset-Toolkit
+python -m venv .venv
+source .venv/bin/activate  # macOS/Linux
+# .venv\Scripts\activate   # Windows
+pip install -e .
+```
+
+This installs two CLI entry points:
+- `unreal-agent-toolkit` — index management CLI
+- `unreal-agent-mcp` — MCP server
+
+### From PyPI
+
+```bash
+pip install unreal-agent-toolkit
+```
+
+Note: the C# AssetParser binary is downloaded automatically from GitHub Releases on first use. For manual builds, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Optional dependencies
+
+```bash
+pip install -e ".[embeddings]"  # vector embeddings (sentence-transformers)
+pip install -e ".[dev]"         # pytest + coverage
+```
+
 ## Platform Notes
 
 **Windows** (primary platform):
@@ -28,42 +64,24 @@ AI-powered Unreal Engine asset inspection toolkit. Analyze Blueprints, Materials
 **Linux**:
 - Install .NET SDK via your package manager or the [official instructions](https://learn.microsoft.com/dotnet/core/install/linux).
 
-**Virtual environment** (all platforms):
-```bash
-python -m venv .venv
-# Windows:  .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
-pip install -r UnrealAgent/requirements.txt
-```
-
 ## Quick Start
 
 ```bash
-# 1. Clone the repository
-git clone --recursive https://github.com/bradenleague/UE-Agent-Asset-Toolkit
-cd UE-Agent-Asset-Toolkit
+# 1. Clone and install (see Installation above)
 
-# 2. Create a virtual environment
-python -m venv .venv
-source .venv/bin/activate        # macOS/Linux
-# .venv\Scripts\activate         # Windows
-
-# 3. Run setup — builds the parser, installs Python deps, configures your project
+# 2. Run setup — builds the parser, configures your project
 python setup.py /path/to/YourProject.uproject
 
-# 4. Build the search index
-python index.py
-# Optional: include plugin content too (slower on large plugin-heavy projects)
-# python index.py --plugins
+# 3. Build the search index
+unreal-agent-toolkit
+# Or with plugins: unreal-agent-toolkit --plugins
 
-# 5. Connect to your MCP client (see below)
+# 4. Connect to your MCP client (see below)
 ```
 
 Note: the `UAssetAPI` submodule is about 70MB, so the initial clone can take a minute on slower connections.
-Important: keep the virtual environment activated before running `python setup.py` so dependencies install into `.venv` and not global Python.
-Note: in new terminal sessions, re-activate the virtual environment before running `index.py` or `UnrealAgent/mcp_server.py`.
 
-`setup.py` handles building the C# parser (UAssetAPI + AssetParser), installing Python packages, and registering your `.uproject`. Add `--index` to combine steps 3 and 4.
+`setup.py` handles building the C# parser (UAssetAPI + AssetParser), installing Python packages, and registering your `.uproject`. Add `--index` to combine steps 2 and 3.
 
 You can also clone into your UE project as a subfolder:
 ```bash
@@ -72,18 +90,45 @@ git clone --recursive https://github.com/bradenleague/UE-Agent-Asset-Toolkit Too
 cd Tools && python setup.py ../YourProject.uproject --index
 ```
 
+## What Can I Ask?
+
+Once indexed and connected via MCP, try queries like:
+
+| Query | What happens |
+|-------|-------------|
+| `"BP_Player"` | Exact name match — finds the Blueprint |
+| `"player health widget"` | Semantic search across all indexed assets |
+| `"where is BP_Enemy used"` | Find all references and placements |
+| `"damage calculation"` | Find relevant Blueprints and C++ code |
+| `"inherits:LyraGameplayAbility"` | Find all children of a class |
+| `"tag:Ability.Melee.*"` | Find assets with matching GameplayTags |
+
+Use `inspect_asset` on any result to get full structured data (components, functions, variables, widget trees, material parameters, etc.).
+
 ## MCP Client Setup
 
 The toolkit runs as an MCP server over stdio. After building and indexing, register it in your MCP client config.
 
-Most clients use a server entry similar to:
+### After `pip install -e .` (recommended)
+
+```json
+{
+  "mcpServers": {
+    "unreal": {
+      "command": "unreal-agent-mcp"
+    }
+  }
+}
+```
+
+### From source (without pip install)
 
 ```json
 {
   "mcpServers": {
     "unreal": {
       "command": "/absolute/path/to/.venv/bin/python",
-      "args": ["/absolute/path/to/UE-Agent-Asset-Toolkit/UnrealAgent/mcp_server.py"]
+      "args": ["/absolute/path/to/UE-Agent-Asset-Toolkit/unreal_agent/mcp_server.py"]
     }
   }
 }
@@ -95,8 +140,8 @@ Windows form:
 {
   "mcpServers": {
     "unreal": {
-      "command": "C:\\\\absolute\\\\path\\\\to\\\\UE-Agent-Asset-Toolkit\\\\.venv\\\\Scripts\\\\python.exe",
-      "args": ["C:\\\\absolute\\\\path\\\\to\\\\UE-Agent-Asset-Toolkit\\\\UnrealAgent\\\\mcp_server.py"]
+      "command": "C:\\absolute\\path\\to\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\absolute\\path\\to\\UE-Agent-Asset-Toolkit\\unreal_agent\\mcp_server.py"]
     }
   }
 }
@@ -107,7 +152,7 @@ Client configs differ, so always verify in your client's MCP docs:
 - exact JSON key names/shape
 - whether a restart is required to load new MCP servers
 
-Use absolute paths and prefer the venv Python so runtime dependencies are consistent.
+See [`mcp-config.example.json`](mcp-config.example.json) for a copy-paste template.
 
 ## MCP Tools
 
@@ -136,28 +181,43 @@ Get detailed structured data about a specific asset:
 ## Project Structure
 
 ```
-YourProject/
-├── YourProject.uproject
-├── Content/
-└── Tools/
-    ├── setup.py              # Cross-platform setup script
-    ├── setup.bat / setup.sh  # Wrapper scripts
-    ├── index.py              # Indexing commands
-    ├── index.bat / index.sh  # Wrapper scripts
-    │
-    ├── AssetParser/          # C# binary parser
-    │   └── bin/Release/net8.0/AssetParser.exe
-    │
-    ├── UnrealAgent/          # Python indexer + MCP server
-    │   ├── mcp_server.py     # MCP server (2 tools)
-    │   ├── tools.py          # Backend implementations
-    │   ├── knowledge_index/  # Semantic search index
-    │   ├── config.json       # Project config (multi-project)
-    │   └── data/             # Per-project databases
-    │       ├── lyra.db
-    │       └── mygame.db
-    │
-    └── UAssetAPI/            # .uasset parsing library (submodule)
+UE-Agent-Asset-Toolkit/
+├── pyproject.toml            # Python package config
+├── setup.py                  # Cross-platform setup script
+├── index.py                  # Backwards-compatible CLI shim
+│
+├── AssetParser/              # C# binary parser
+│   └── bin/Release/net8.0/AssetParser
+│
+├── unreal_agent/             # Python package
+│   ├── __init__.py           # Package version
+│   ├── mcp_server.py         # MCP server (2 tools)
+│   ├── cli.py                # Index management CLI
+│   ├── tools.py              # Backend implementations
+│   ├── parser_resolver.py    # AssetParser binary resolution
+│   ├── parser_download.py    # GitHub Releases download fallback
+│   ├── project_profile.py    # Profile loading and merging
+│   ├── config.json           # Project config (multi-project)
+│   │
+│   ├── knowledge_index/      # Semantic search index
+│   │   ├── indexer.py        # Asset indexing pipeline
+│   │   ├── store.py          # SQLite schema and queries
+│   │   └── schemas.py        # DocChunk types
+│   │
+│   ├── search/               # Search engine
+│   │   ├── engine.py         # FTS5 + vector search
+│   │   ├── retriever.py      # Result enrichment
+│   │   └── trace.py          # System trace builder
+│   │
+│   ├── profiles/             # Project profiles
+│   │   ├── _defaults.json    # Engine-level types
+│   │   └── <project>.json    # Project-specific overrides
+│   │
+│   └── data/                 # Per-project databases
+│       └── <project>.db
+│
+├── tests/                    # 227 tests
+└── UAssetAPI/                # .uasset parsing library (submodule)
 ```
 
 ## Architecture
@@ -176,158 +236,82 @@ Two-tier architecture:
 ┌─────────────────────────────────────────────────────────────┐
 │  MCP Server (Python)                                        │
 │  - unreal_search: FTS + vector search on {project}.db       │
-│  - inspect_asset: calls AssetParser.exe                     │
+│  - inspect_asset: calls AssetParser                         │
 └─────────────────────────────────────────────────────────────┘
                      │                    │
                      ▼                    ▼
 ┌─────────────────────────┐    ┌──────────────────────────────┐
-│  data/{project}.db      │    │  AssetParser.exe (C#)        │
-│  (SQLite + FTS5)        │    │  Parses .uasset binaries     │
+│  data/{project}.db      │    │  AssetParser (C#)             │
+│  (SQLite + FTS5)        │    │  Parses .uasset binaries      │
 └─────────────────────────┘    └──────────────────────────────┘
 ```
 
 ## Indexing
 
-Build the semantic index from the repo root.
+Build the semantic index using the CLI.
 
 ### Commands Reference
 
 | Command | Description |
 |---------|-------------|
-| `--profile hybrid` | Full hybrid index (semantic + lightweight for all assets) |
-| `--plugins` | Full index including plugin content (can be much slower on large projects) |
-| `--plugins --embed` | Full index + vector embeddings (best quality) |
-| `--profile quick` | Only WidgetBlueprint, DataTable, MaterialInstance |
-| `--source` | C++ source files (UCLASS, UPROPERTY macros) |
-| `--path UI` | Only index assets under a specific path (see note below) |
-| `--force` | Re-index everything (ignore fingerprint cache) |
-| `--status` | Show detailed index statistics |
+| `unreal-agent-toolkit` | Full hybrid index (default) |
+| `unreal-agent-toolkit --profile quick` | Only WidgetBlueprint, DataTable, MaterialInstance |
+| `unreal-agent-toolkit --plugins` | Full index including plugin content |
+| `unreal-agent-toolkit --plugins --embed` | Full index + vector embeddings |
+| `unreal-agent-toolkit --source` | C++ source files (UCLASS, UPROPERTY macros) |
+| `unreal-agent-toolkit --path UI` | Only index assets under a specific path |
+| `unreal-agent-toolkit --force` | Re-index everything (ignore fingerprint cache) |
+| `unreal-agent-toolkit --status` | Show detailed index statistics |
 
-**Path convention:** The `--path` option uses Unreal's virtual path convention where `/Game/` maps to your `Content/` folder. Use the folder name relative to Content:
+**Path convention:** The `--path` option uses Unreal's virtual path convention where `/Game/` maps to your `Content/` folder:
 ```bash
-python index.py --path UI          # indexes Content/UI/
-python index.py --path UI/HUD      # indexes Content/UI/HUD/
-python index.py --path /Game/UI    # same as above (explicit form)
+unreal-agent-toolkit --path UI          # indexes Content/UI/
+unreal-agent-toolkit --path UI/HUD      # indexes Content/UI/HUD/
+unreal-agent-toolkit --path /Game/UI    # same as above (explicit form)
 ```
-Do NOT use filesystem paths like `C:\Projects\MyGame\Content\UI` - use the virtual path instead.
+Do NOT use filesystem paths — use the virtual path instead.
+
+**Backwards compatibility:** `python index.py` still works as a shim for `unreal-agent-toolkit`.
 
 ### Recommended Workflows
 
 **Comprehensive (slowest):**
 ```bash
-python index.py --plugins --embed --source
+unreal-agent-toolkit --plugins --embed --source
 ```
 Full coverage: all assets, all plugins, vector embeddings for semantic search, and C++ source.
-If embedding dependencies are unavailable, use `--plugins --source` (FTS-only search still works well).
 
 **Standard (recommended for most projects):**
 ```bash
-python index.py
+unreal-agent-toolkit
 ```
 Full coverage without embeddings. FTS5 full-text search works well for most queries.
 
-**Plugin-inclusive (slower):**
-```bash
-python index.py --plugins
-```
-Use this when you need plugin content indexed (especially Game Feature plugins). For large plugin-heavy projects this can take significantly longer.
-
 **Quick (fastest):**
 ```bash
-python index.py --profile quick --plugins
+unreal-agent-toolkit --profile quick --plugins
 ```
 Just the high-value types you search most often.
-
-### Rebuilding Specific Sections
-
-```bash
-# Rebuild just UI assets
-python index.py --path UI --force
-
-# Rebuild just blueprints folder
-python index.py --path Blueprints --force
-
-# Rebuild C++ source only
-python index.py --source --force
-```
-
-The `--force` flag bypasses the fingerprint cache that normally skips unchanged files.
-
-**Note:** Incremental indexing is built-in. Without `--force`, unchanged files are skipped based on file hash.
-
-### Wrapper Scripts
-```bash
-.\index.bat          # Windows
-./index.sh           # macOS/Linux
-```
-
-## Manual Setup
-
-If you prefer manual setup:
-
-```bash
-# Build UAssetAPI
-cd Tools/UAssetAPI/UAssetAPI && dotnet build -c Release
-
-# Build AssetParser
-cd Tools/AssetParser && dotnet build -c Release
-
-# Install Python dependencies
-cd Tools/UnrealAgent && pip install -r requirements.txt
-
-# Build index
-cd Tools && python index.py
-```
 
 ## Multi-Project Setup
 
 The toolkit supports multiple projects with isolated per-project databases.
 
-### Project Management Commands
-
 ```bash
 # Add a project (sets it as active)
-python index.py add "C:\Projects\MyGame\MyGame.uproject"
-python index.py add ~/Projects/Lyra/Lyra.uproject --name lyra
+unreal-agent-toolkit add "/path/to/MyGame/MyGame.uproject"
 
 # List all projects
-python index.py list
+unreal-agent-toolkit list
 
 # Switch active project
-python index.py use lyra
+unreal-agent-toolkit use lyra
 
 # Index a specific project without switching
-python index.py --project shootergame
+unreal-agent-toolkit --project shootergame
 ```
 
-### Per-Project Databases
-
-Each project gets its own isolated database:
-```
-UnrealAgent/data/
-├── lyra.db           # Lyra project index
-├── mygame.db         # MyGame project index
-└── shootergame.db    # ShooterGame project index
-```
-
-### Manual Configuration
-
-You can also edit `Tools/UnrealAgent/config.json` directly:
-
-```json
-{
-  "active_project": "lyra",
-  "projects": {
-    "lyra": {
-      "project_path": "C:\\Projects\\Lyra\\Lyra.uproject",
-      "engine_path": "C:\\Program Files\\Epic Games\\UE_5.4\\..."
-    },
-    "mygame": {
-      "project_path": "D:\\Projects\\MyGame\\MyGame.uproject"
-    }
-  }
-}
-```
+Each project gets its own isolated database at `unreal_agent/data/<project_name>.db`.
 
 ## Project Profiles
 
@@ -337,20 +321,18 @@ For project-specific types (custom DataAsset subclasses, experience definitions,
 
 ```bash
 # 1. Index with defaults first
-python index.py --plugins
+unreal-agent-toolkit --plugins
 
 # 2. Create a profile based on what you find
-#    See AGENT_PROFILE_GUIDE.md for field reference
-cp UnrealAgent/profiles/_defaults.json UnrealAgent/profiles/mygame.json
-#    Edit mygame.json with your project's types...
+cp unreal_agent/profiles/_defaults.json unreal_agent/profiles/mygame.json
 
 # 3. Link it in config.json (add "profile": "mygame" to your project entry)
 
 # 4. Re-index with the profile
-python index.py --plugins --force
+unreal-agent-toolkit --plugins --force
 ```
 
-Profiles live in `UnrealAgent/profiles/`. See:
+Profiles live in `unreal_agent/profiles/`. See:
 - [AGENT_PROFILE_GUIDE.md](AGENT_PROFILE_GUIDE.md) — Profile field reference and discovery queries
 - [AGENT_ONBOARDING.md](AGENT_ONBOARDING.md) — Full onboarding walkthrough
 - [AGENTS.md](AGENTS.md) — Agent instructions (read automatically by AI coding agents)
@@ -366,5 +348,5 @@ Profiles live in `UnrealAgent/profiles/`. See:
 
 ## License
 
-- **AssetParser/UnrealAgent**: MIT
+- **AssetParser/unreal_agent**: MIT
 - **UAssetAPI**: See [UAssetAPI/LICENSE](UAssetAPI/LICENSE)

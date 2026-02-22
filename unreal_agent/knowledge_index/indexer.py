@@ -23,7 +23,7 @@ import subprocess
 import re
 import time
 
-from UnrealAgent.pathutil import to_game_path_sep
+from unreal_agent.pathutil import to_game_path_sep
 
 
 def get_batch_timeout() -> int:
@@ -312,7 +312,7 @@ class AssetIndexer:
 
         # Apply project profile
         if profile is None:
-            from UnrealAgent.project_profile import load_profile
+            from unreal_agent.project_profile import load_profile
 
             profile = load_profile()
         self._apply_profile(profile)
@@ -353,7 +353,7 @@ class AssetIndexer:
 
     def _write_resolved_parser_config(self, profile) -> Optional[Path]:
         """Write merged parser type config to profiles/.resolved/<name>.json."""
-        from UnrealAgent.project_profile import get_parser_type_config
+        from unreal_agent.project_profile import get_parser_type_config
 
         profiles_dir = Path(__file__).parent.parent / "profiles" / ".resolved"
         profiles_dir.mkdir(parents=True, exist_ok=True)
@@ -379,7 +379,7 @@ class AssetIndexer:
         """Detect AssetParser path across platforms."""
         import platform
 
-        base_dir = Path(__file__).parent.parent  # UnrealAgent/
+        base_dir = Path(__file__).parent.parent  # unreal_agent/
         parser_base = base_dir.parent / "AssetParser" / "bin" / "Release" / "net8.0"
 
         # Check local_config.json first (created by setup.sh)

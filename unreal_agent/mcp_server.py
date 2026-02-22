@@ -14,8 +14,7 @@ Usage:
     {
         "mcpServers": {
             "unreal": {
-                "command": "python",
-                "args": ["/path/to/UnrealAgent/mcp_server.py"]
+                "command": "unreal-agent-mcp"
             }
         }
     }
@@ -30,36 +29,28 @@ from pathlib import Path
 
 logger = logging.getLogger("unreal-asset-tools")
 
+# Support source-based invocation:
+#   python /path/to/repo/unreal_agent/mcp_server.py
+# In that mode, sys.path[0] is the package directory itself, so absolute
+# imports like `from unreal_agent...` need the repo root added explicitly.
+if __package__ in (None, ""):
+    repo_root = Path(__file__).resolve().parent.parent
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-# Add project root for package imports (from UnrealAgent.xxx)
-# and UnrealAgent/ for local script imports (from tools import ...)
-_this_dir = Path(__file__).resolve().parent
-sys.path.insert(0, str(_this_dir.parent))
-sys.path.insert(0, str(_this_dir))
-
-from core import (
+from unreal_agent.core import (
     PROJECT,
     get_project_db_path,
     get_active_project_name,
     get_plugin_paths,
 )
-from assets import inspect_asset as _raw_inspect
-from search import unreal_search, get_store, get_retriever_instance
-from search.engine import _normalize_ue_path  # noqa: F401
-from search.trace import should_try_tag_search as _should_try_tag_search  # noqa: F401
-from search.retriever import (
-    enrich_results_with_full_docs as _enrich_results_with_full_docs,
-)  # noqa: F401
-
-# Keep re-exports accessible — downstream tests import these from mcp_server
-__all__ = [
-    "_normalize_ue_path",
-    "_should_try_tag_search",
-    "_enrich_results_with_full_docs",
-]
+from unreal_agent.assets import inspect_asset as _raw_inspect
+from unreal_agent.search import unreal_search, get_store, get_retriever_instance
 
 # Regex patterns for extracting C++ class names from Blueprint XML
 _RE_PARENT = re.compile(r"<parent>([^<]+)</parent>")
@@ -530,7 +521,12 @@ async def main():
         )
 
 
-if __name__ == "__main__":
+def cli_main():
+    """Entry point for the unreal-agent-mcp command."""
     import asyncio
 
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    cli_main()

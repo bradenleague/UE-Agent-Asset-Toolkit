@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from UnrealAgent.knowledge_index.store import KnowledgeStore
+from unreal_agent.knowledge_index.store import KnowledgeStore
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ class TestResolveCppSources:
 # _enrich_blueprint_xml
 # ---------------------------------------------------------------------------
 
-from UnrealAgent.mcp_server import _enrich_blueprint_xml
+from unreal_agent.mcp_server import _enrich_blueprint_xml
 
 
 _BLUEPRINT_XML = """<blueprint>
@@ -180,7 +180,7 @@ class TestEnrichBlueprintXml:
             },
         }
 
-        with patch("UnrealAgent.mcp_server.get_store", return_value=mock_store):
+        with patch("unreal_agent.mcp_server.get_store", return_value=mock_store):
             result = _enrich_blueprint_xml(_BLUEPRINT_XML)
 
         assert "<cpp-sources" in result
@@ -198,7 +198,7 @@ class TestEnrichBlueprintXml:
         mock_store = MagicMock()
         mock_store.resolve_cpp_sources.return_value = {}
 
-        with patch("UnrealAgent.mcp_server.get_store", return_value=mock_store):
+        with patch("unreal_agent.mcp_server.get_store", return_value=mock_store):
             result = _enrich_blueprint_xml(_BLUEPRINT_XML)
 
         assert result == _BLUEPRINT_XML
@@ -212,7 +212,7 @@ class TestEnrichBlueprintXml:
     def test_store_exception_returns_original(self):
         """If store raises, return original XML gracefully."""
         with patch(
-            "UnrealAgent.mcp_server.get_store", side_effect=Exception("DB error")
+            "unreal_agent.mcp_server.get_store", side_effect=Exception("DB error")
         ):
             result = _enrich_blueprint_xml(_BLUEPRINT_XML)
         assert result == _BLUEPRINT_XML
@@ -231,7 +231,7 @@ class TestEnrichBlueprintXml:
             },
         }
 
-        with patch("UnrealAgent.mcp_server.get_store", return_value=mock_store):
+        with patch("unreal_agent.mcp_server.get_store", return_value=mock_store):
             result = _enrich_blueprint_xml(_BLUEPRINT_XML)
 
         assert 'class="LyraHealthComponent"' in result
@@ -251,9 +251,9 @@ class TestEnrichBlueprintXml:
         }
 
         with (
-            patch("UnrealAgent.mcp_server.get_store", return_value=mock_store),
+            patch("unreal_agent.mcp_server.get_store", return_value=mock_store),
             patch(
-                "UnrealAgent.mcp_server._get_project_root",
+                "unreal_agent.mcp_server._get_project_root",
                 return_value="C:\\Users\\A&B",
             ),
         ):
@@ -297,13 +297,13 @@ class TestSearchCppFallback:
         }
 
         with (
-            patch("UnrealAgent.search.engine.get_store", return_value=mock_store),
+            patch("unreal_agent.search.engine.get_store", return_value=mock_store),
             patch(
-                "UnrealAgent.search.engine.get_retriever_instance",
+                "unreal_agent.search.engine.get_retriever_instance",
                 return_value=mock_retriever,
             ),
         ):
-            from UnrealAgent.search.engine import unreal_search
+            from unreal_agent.search.engine import unreal_search
 
             result = unreal_search("LyraHealthComponent", search_type="name", limit=5)
 

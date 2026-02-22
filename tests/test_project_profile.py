@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch
 
-from UnrealAgent.project_profile import (
+from unreal_agent.project_profile import (
     ProjectProfile,
     load_profile,
     get_parser_type_config,
@@ -123,7 +123,7 @@ class TestLoadProfile:
         """When no profile is configured, load_profile(None) returns defaults."""
         # Patch _resolve_profile_name to return None (no config)
         with patch(
-            "UnrealAgent.project_profile._resolve_profile_name", return_value=None
+            "unreal_agent.project_profile._resolve_profile_name", return_value=None
         ):
             profile = load_profile(None)
         assert profile.profile_name == "_defaults"

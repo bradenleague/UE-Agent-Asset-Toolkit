@@ -7,8 +7,20 @@ AssetParser CLI which parses .uasset files directly.
 import sys
 import os
 import json
+from pathlib import Path
 
-from core import (  # noqa: F401 — re-exported for index.py `import tools`
+# Support source-based invocation:
+#   python unreal_agent/tools.py --list
+#   cd unreal_agent && python tools.py --list
+# In these modes, sys.path may not include the repo root required for
+# absolute imports like `from unreal_agent...`.
+if __package__ in (None, ""):
+    repo_root = Path(__file__).resolve().parent.parent
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+
+from unreal_agent.core import (  # noqa: F401 — re-exported for cli.py
     UE_EDITOR,
     PROJECT,
     DEBUG,
@@ -23,9 +35,9 @@ from core import (  # noqa: F401 — re-exported for index.py `import tools`
     get_plugin_paths,
     format_eta,
 )
-from core.config import CONFIG_FILE
+from unreal_agent.core.config import CONFIG_FILE
 
-from assets import (
+from unreal_agent.assets import (
     inspect_asset,
     inspect_widget,
     inspect_datatable,
@@ -160,7 +172,7 @@ if __name__ == "__main__":
             print("Run 'python tools.py --index' to build it.")
             sys.exit(1)
 
-        from knowledge_index import KnowledgeStore
+        from unreal_agent.knowledge_index import KnowledgeStore
 
         store = KnowledgeStore(db_path)
         status = store.get_status()
@@ -213,14 +225,14 @@ if __name__ == "__main__":
         db_path = Path(get_project_db_path())
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        from knowledge_index import KnowledgeStore, AssetIndexer
+        from unreal_agent.knowledge_index import KnowledgeStore, AssetIndexer
 
         print("Building semantic index...")
         print(f"  Content: {content_path}")
         print(f"  Database: {db_path}")
         print()
 
-        from project_profile import load_profile
+        from unreal_agent.project_profile import load_profile
 
         store = KnowledgeStore(db_path)
         project_profile = load_profile(emit_info=False)
@@ -361,7 +373,7 @@ if __name__ == "__main__":
         db_path = Path(get_project_db_path())
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        from knowledge_index import KnowledgeStore, AssetIndexer
+        from unreal_agent.knowledge_index import KnowledgeStore, AssetIndexer
 
         print(f"Building semantic index (batch mode, profile: {profile})...")
         print(f"  Content: {content_path}")
@@ -394,7 +406,9 @@ if __name__ == "__main__":
             print()
             print("Loading sentence-transformers for embeddings...")
             try:
-                from knowledge_index.indexer import create_sentence_transformer_embedder
+                from unreal_agent.knowledge_index.indexer import (
+                    create_sentence_transformer_embedder,
+                )
 
                 embed_fn = create_sentence_transformer_embedder()
                 embed_model = "all-MiniLM-L6-v2"
@@ -421,7 +435,7 @@ if __name__ == "__main__":
                 f"  Plugins: {len(plugin_paths)} found ({', '.join(mp for mp, _ in plugin_paths)})"
             )
 
-        from project_profile import load_profile
+        from unreal_agent.project_profile import load_profile
 
         store = KnowledgeStore(db_path)
         project_profile = load_profile(emit_info=False)
@@ -528,11 +542,13 @@ if __name__ == "__main__":
                 except ValueError:
                     pass
 
-        from knowledge_index import KnowledgeStore, AssetIndexer
+        from unreal_agent.knowledge_index import KnowledgeStore, AssetIndexer
 
         print("Loading sentence-transformers for embedding backfill...")
         try:
-            from knowledge_index.indexer import create_sentence_transformer_embedder
+            from unreal_agent.knowledge_index.indexer import (
+                create_sentence_transformer_embedder,
+            )
 
             embed_fn = create_sentence_transformer_embedder()
             embed_model = "all-MiniLM-L6-v2"
@@ -613,7 +629,7 @@ if __name__ == "__main__":
         db_path = Path(get_project_db_path())
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        from knowledge_index import KnowledgeStore
+        from unreal_agent.knowledge_index import KnowledgeStore
 
         store = KnowledgeStore(db_path)
         count = store.scan_cpp_classes(project_root)
@@ -636,7 +652,7 @@ if __name__ == "__main__":
         db_path = Path(get_project_db_path())
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        from knowledge_index import KnowledgeStore, AssetIndexer
+        from unreal_agent.knowledge_index import KnowledgeStore, AssetIndexer
 
         print("Building full semantic index (assets + C++ class scan)...")
         print(f"  Project: {project_root}")
@@ -681,7 +697,7 @@ if __name__ == "__main__":
         # Index assets
         if content_path.exists():
             print("Indexing assets...")
-            from project_profile import load_profile
+            from unreal_agent.project_profile import load_profile
 
             project_profile = load_profile(emit_info=False)
             if project_profile.profile_name == "_defaults":

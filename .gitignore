@@ -13,18 +13,23 @@ venv/
 .venv/
 *.egg-info/
 .eggs/
+dist/
+build/
+.coverage
+htmlcov/
+coverage.xml
 
 # User-specific config (use config.example.json as template)
-UnrealAgent/config.json
-UnrealAgent/local_config.json
+unreal_agent/config.json
+unreal_agent/local_config.json
 
 # Resolved profiles (auto-generated per project)
-UnrealAgent/profiles/.resolved/
+unreal_agent/profiles/.resolved/
 
 # Semantic Index (auto-generated per project)
 *.db
 *.sqlite
-UnrealAgent/data/
+unreal_agent/data/
 knowledge_index.db
 
 # IDE
@@ -64,4 +69,4 @@ CLAUDE.md
 .pytest_cache/
 
 # Python virtual environment
-UnrealAgent/.venv/
+unreal_agent/.venv/

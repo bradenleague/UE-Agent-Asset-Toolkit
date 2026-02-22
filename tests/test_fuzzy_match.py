@@ -1,7 +1,6 @@
 """Tests for _select_fuzzy_match() confidence gating."""
 
-
-from UnrealAgent.mcp_server import _select_fuzzy_match
+from unreal_agent.mcp_server import _select_fuzzy_match
 
 
 def _make_result(name: str, path: str, score: float) -> dict:

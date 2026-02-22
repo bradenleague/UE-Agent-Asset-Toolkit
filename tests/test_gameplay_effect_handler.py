@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from UnrealAgent.knowledge_index.indexer import AssetIndexer, _collect_and_merge_tags
+from unreal_agent.knowledge_index.indexer import AssetIndexer, _collect_and_merge_tags
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +337,7 @@ GE_SCRIPT_OBJECT_PARENT_INSPECT = {
 
 
 def _make_indexer_with_mock(inspect_data, refs=None, profile_name="_defaults"):
-    from UnrealAgent.project_profile import load_profile
+    from unreal_agent.project_profile import load_profile
 
     indexer = AssetIndexer.__new__(AssetIndexer)
     indexer.store = MagicMock()
@@ -531,7 +531,7 @@ class TestCollectAndMergeTags:
 
 class TestGameplayEffectProfile:
     def test_defaults_profile_has_gameplay_effect(self):
-        from UnrealAgent.project_profile import load_profile
+        from unreal_agent.project_profile import load_profile
 
         profile = load_profile("_defaults")
         assert "GameplayEffect" in profile.export_class_reclassify
@@ -540,7 +540,7 @@ class TestGameplayEffectProfile:
 
     def test_lyra_overlay_preserves_ge_defaults(self):
         """Lyra overlay must not wipe engine-level GameplayEffect config."""
-        from UnrealAgent.project_profile import load_profile, clear_cache
+        from unreal_agent.project_profile import load_profile, clear_cache
 
         clear_cache()
         profile = load_profile("lyra", emit_info=False)

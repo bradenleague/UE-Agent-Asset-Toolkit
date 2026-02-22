@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from UnrealAgent.knowledge_index.indexer import AssetIndexer
+from unreal_agent.knowledge_index.indexer import AssetIndexer
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +365,7 @@ def _make_indexer_with_mock(
     profile_name: str = "lyra",
 ):
     """Create an AssetIndexer with a mocked _run_parser and _get_asset_references."""
-    from UnrealAgent.project_profile import load_profile
+    from unreal_agent.project_profile import load_profile
 
     indexer = AssetIndexer.__new__(AssetIndexer)
     indexer.store = MagicMock()
@@ -781,8 +781,8 @@ class TestEdgeCases:
 class TestExtractorRegistry:
     def test_all_lyra_classes_registered(self):
         """Every class in lyra.json data_asset_extractors has a registered handler."""
-        from UnrealAgent.knowledge_index.indexer import _EXTRACTOR_REGISTRY
-        from UnrealAgent.project_profile import load_profile
+        from unreal_agent.knowledge_index.indexer import _EXTRACTOR_REGISTRY
+        from unreal_agent.project_profile import load_profile
 
         profile = load_profile("lyra")
         for cls in profile.data_asset_extractors:
@@ -792,7 +792,7 @@ class TestExtractorRegistry:
 
     def test_registry_method_names_valid(self):
         """All registered method names exist on AssetIndexer."""
-        from UnrealAgent.knowledge_index.indexer import _EXTRACTOR_REGISTRY
+        from unreal_agent.knowledge_index.indexer import _EXTRACTOR_REGISTRY
 
         for cls, method_name in _EXTRACTOR_REGISTRY.items():
             assert hasattr(AssetIndexer, method_name), (

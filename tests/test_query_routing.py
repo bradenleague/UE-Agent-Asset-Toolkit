@@ -1,9 +1,9 @@
 """Regression tests for explicit query routing between mcp_server and retriever."""
 
-from UnrealAgent import mcp_server
-from search import engine as search_engine
-from UnrealAgent.knowledge_index.retriever import HybridRetriever
-from UnrealAgent.knowledge_index.schemas import DocChunk, SearchResult
+from unreal_agent import mcp_server
+from unreal_agent.search import engine as search_engine
+from unreal_agent.knowledge_index.retriever import HybridRetriever
+from unreal_agent.knowledge_index.schemas import DocChunk, SearchResult
 
 
 class _DummyStore:

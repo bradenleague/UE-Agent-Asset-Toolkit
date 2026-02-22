@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "unreal-agent-toolkit"
+version = "0.1.0"
+description = "AI-powered Unreal Engine asset inspection toolkit with MCP server"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Braden League" }]
+keywords = ["unreal-engine", "mcp", "ai", "game-development"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+dependencies = ["mcp>=1.0.0"]
+
+[project.optional-dependencies]
+embeddings = ["sentence-transformers>=2.0.0", "numpy>=1.20.0"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+
+[project.scripts]
+unreal-agent-toolkit = "unreal_agent.cli:main"
+unreal-agent-mcp = "unreal_agent.mcp_server:cli_main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["unreal_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--tb=short"
+
+[tool.coverage.run]
+source = ["unreal_agent"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

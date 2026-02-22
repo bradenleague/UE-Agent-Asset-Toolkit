@@ -6,13 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from UnrealAgent.knowledge_index.indexer import (
+from unreal_agent.knowledge_index.indexer import (
     AssetIndexer,
     _extract_gameplay_tags_from_data,
     _get_tag_name,
 )
-from UnrealAgent.knowledge_index.schemas import DocChunk
-from UnrealAgent.knowledge_index.store import KnowledgeStore
+from unreal_agent.knowledge_index.schemas import DocChunk
+from unreal_agent.knowledge_index.store import KnowledgeStore
 
 
 # =========================================================================
@@ -275,7 +275,7 @@ def _make_indexer():
     indexer.imc_dirs = []
     indexer.data_asset_types = set()
     # Build extractor dispatch table from registry
-    from UnrealAgent.knowledge_index.indexer import _EXTRACTOR_REGISTRY
+    from unreal_agent.knowledge_index.indexer import _EXTRACTOR_REGISTRY
 
     indexer._data_asset_extractors = {}
     for cls_name, method_name in _EXTRACTOR_REGISTRY.items():
@@ -404,31 +404,31 @@ class TestTagAutoDetect:
     """Test _should_try_tag_search regex."""
 
     def test_dotted_pascal_case_matches(self):
-        from UnrealAgent.mcp_server import _should_try_tag_search
+        from unreal_agent.search.trace import should_try_tag_search as _should_try_tag_search
 
         assert _should_try_tag_search("InputTag.Ability.Dash") is True
 
     def test_bp_prefix_does_not_match(self):
-        from UnrealAgent.mcp_server import _should_try_tag_search
+        from unreal_agent.search.trace import should_try_tag_search as _should_try_tag_search
 
         assert _should_try_tag_search("BP_PlayerCharacter") is False
 
     def test_tag_prefix_always_matches(self):
-        from UnrealAgent.mcp_server import _should_try_tag_search
+        from unreal_agent.search.trace import should_try_tag_search as _should_try_tag_search
 
         assert _should_try_tag_search("tag:Footstep") is True
 
     def test_single_word_does_not_match(self):
-        from UnrealAgent.mcp_server import _should_try_tag_search
+        from unreal_agent.search.trace import should_try_tag_search as _should_try_tag_search
 
         assert _should_try_tag_search("player") is False
 
     def test_wildcard_suffix_matches(self):
-        from UnrealAgent.mcp_server import _should_try_tag_search
+        from unreal_agent.search.trace import should_try_tag_search as _should_try_tag_search
 
         assert _should_try_tag_search("InputTag.Ability.*") is True
 
     def test_lowercase_does_not_match(self):
-        from UnrealAgent.mcp_server import _should_try_tag_search
+        from unreal_agent.search.trace import should_try_tag_search as _should_try_tag_search
 
         assert _should_try_tag_search("input.tag.ability") is False

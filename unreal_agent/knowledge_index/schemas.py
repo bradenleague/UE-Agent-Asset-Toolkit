@@ -15,7 +15,7 @@ from typing import Optional
 import hashlib
 import json
 
-from UnrealAgent.pathutil import to_game_path_sep
+from unreal_agent.pathutil import to_game_path_sep
 
 
 def extract_module_from_asset_path(path: str) -> str:

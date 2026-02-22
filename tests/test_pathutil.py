@@ -2,7 +2,7 @@
 
 import pytest
 
-from UnrealAgent.pathutil import to_game_path_sep
+from unreal_agent.pathutil import to_game_path_sep
 
 
 # ---------------------------------------------------------------------------
@@ -47,8 +47,8 @@ class TestFsToGamePathIntegration:
     @pytest.fixture()
     def indexer(self, tmp_path):
         """Create a minimal AssetIndexer with a fake content path."""
-        from UnrealAgent.knowledge_index.indexer import AssetIndexer
-        from UnrealAgent.knowledge_index.store import KnowledgeStore
+        from unreal_agent.knowledge_index.indexer import AssetIndexer
+        from unreal_agent.knowledge_index.store import KnowledgeStore
 
         content = tmp_path / "Content"
         content.mkdir()

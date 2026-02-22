@@ -46,8 +46,8 @@ def _auto_detect_project():
     """Auto-detect .uproject file in parent directories of Tools folder."""
     global UE_EDITOR, PROJECT
 
-    # Tools folder is typically at ProjectRoot/Tools/UnrealAgent
-    # _TOOL_DIR is UnrealAgent, so look 2 levels up for .uproject
+    # Tools folder is typically at ProjectRoot/Tools/unreal_agent
+    # _TOOL_DIR is unreal_agent, so look 2 levels up for .uproject
     tools_parent = os.path.dirname(_TOOL_DIR)  # Tools
     project_root = os.path.dirname(tools_parent)  # ProjectRoot
 
@@ -87,7 +87,9 @@ def _auto_create_config(project_path: str, engine_path: str):
         with open(CONFIG_FILE, "w") as f:
             json.dump(config, f, indent=2)
         if DEBUG:
-            print(f"[DEBUG] Auto-created config.json for {project_name}", file=sys.stderr)
+            print(
+                f"[DEBUG] Auto-created config.json for {project_name}", file=sys.stderr
+            )
     except Exception as e:
         if DEBUG:
             print(f"[DEBUG] Failed to auto-create config: {e}", file=sys.stderr)
@@ -140,7 +142,9 @@ def set_active_project(project_name: str):
     projects = config.get("projects", {})
     if project_name not in projects:
         available = ", ".join(projects.keys())
-        raise ValueError(f"Project '{project_name}' not in config. Available: {available}")
+        raise ValueError(
+            f"Project '{project_name}' not in config. Available: {available}"
+        )
 
     config["active_project"] = project_name
 
@@ -151,14 +155,8 @@ def set_active_project(project_name: str):
 
 
 def _detect_engine_path(project_path: str) -> str:
-    # Top-level import path to engine_detect (up one module)
-    try:
-        from engine_detect import detect_engine_path
-    except ImportError:
-        import sys
-        sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-        from engine_detect import detect_engine_path
-        
+    from unreal_agent.engine_detect import detect_engine_path
+
     return detect_engine_path(project_path)
 
 
@@ -277,6 +275,7 @@ def set_project_index_options(options: dict, project_name: str = None):
 
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=2)
+
 
 # Load config on module import
 _load_config()

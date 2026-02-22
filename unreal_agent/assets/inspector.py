@@ -1,13 +1,13 @@
 import os
-import sys
 import json
 import subprocess
 import glob as globmod
 from typing import Optional
 
-from core import PROJECT, DEBUG, _plugin_paths, _discover_plugins
-from pathutil import to_game_path_sep
+from unreal_agent.core import _plugin_paths, _discover_plugins
+from unreal_agent.pathutil import to_game_path_sep
 from .heuristics import _guess_asset_type_from_name
+
 
 # Re-use _paginate_results from old tools.py
 def _paginate_results(results: list, limit: int, offset: int) -> str:
@@ -34,6 +34,7 @@ def _paginate_results(results: list, limit: int, offset: int) -> str:
         indent=2,
     )
 
+
 def _get_asset_parser_path() -> str:
     base_dir = os.path.dirname(os.path.dirname(__file__))
 
@@ -50,6 +51,7 @@ def _get_asset_parser_path() -> str:
             pass
 
     import platform
+
     system = platform.system()
     machine = platform.machine()
     parser_dir = os.path.join(base_dir, "..", "AssetParser", "bin", "Release", "net8.0")
@@ -71,8 +73,8 @@ def _get_asset_parser_path() -> str:
 
 
 def _asset_path_to_file(asset_path: str) -> str:
-    from core.config import PROJECT
-    
+    from unreal_agent.core.config import PROJECT
+
     if asset_path.startswith("/Game/"):
         relative_path = asset_path[6:]
         return os.path.join(
@@ -211,8 +213,8 @@ def _list_assets_filesystem(
     limit: int = 50,
     offset: int = 0,
 ) -> str:
-    from core.config import PROJECT
-    
+    from unreal_agent.core.config import PROJECT
+
     if path.startswith("/Game"):
         relative_path = path[6:] if len(path) > 6 else ""
         relative_path = relative_path.lstrip("/")
@@ -267,7 +269,12 @@ def _list_assets_filesystem(
                         asset_class = summary.get("asset_type", "Unknown")
                         if asset_class != type_filter:
                             continue
-                except (subprocess.TimeoutExpired, subprocess.SubprocessError, json.JSONDecodeError, OSError):
+                except (
+                    subprocess.TimeoutExpired,
+                    subprocess.SubprocessError,
+                    json.JSONDecodeError,
+                    OSError,
+                ):
                     skipped_uncertain += 1
                     continue
             else:
@@ -308,14 +315,19 @@ def list_assets(
     limit = min(max(1, limit), 100)
 
     if use_ue:
-        return json.dumps({"error": "use_ue is currently not implemented (requires missing run_ue_script function)."}, indent=2)
+        return json.dumps(
+            {
+                "error": "use_ue is currently not implemented (requires missing run_ue_script function)."
+            },
+            indent=2,
+        )
 
     return _list_assets_filesystem(path, type_filter, limit, offset)
 
 
 def list_asset_folders(path: str = "/Game") -> str:
-    from core.config import PROJECT
-    
+    from unreal_agent.core.config import PROJECT
+
     if path.startswith("/Game"):
         relative_path = path[6:] if len(path) > 6 else ""
         relative_path = relative_path.lstrip("/")

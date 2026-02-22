@@ -4,7 +4,7 @@ import json
 import logging
 from pathlib import Path
 
-from core import get_project_db_path, get_active_project_name
+from unreal_agent.core import get_project_db_path, get_active_project_name
 
 logger = logging.getLogger("unreal-asset-tools")
 
@@ -27,7 +27,7 @@ def get_store():
                 f"Knowledge index not found for project '{project}' at {db_path}. "
                 "Run 'python index.py' first."
             )
-        from knowledge_index import KnowledgeStore
+        from unreal_agent.knowledge_index import KnowledgeStore
 
         _store = KnowledgeStore(db_path)
     return _store
@@ -37,7 +37,7 @@ def get_profile():
     """Get or create the project profile for the active project."""
     global _profile
     if _profile is None:
-        from project_profile import load_profile
+        from unreal_agent.project_profile import load_profile
 
         _profile = load_profile()
     return _profile
@@ -48,7 +48,7 @@ def get_retriever_instance(enable_embeddings: bool = False):
     global _retriever, _embedder_attempted, _embedder_error
     if _retriever is None:
         store = get_store()
-        from knowledge_index import HybridRetriever
+        from unreal_agent.knowledge_index import HybridRetriever
 
         # Start with FTS-only retriever so name/refs queries never depend on HF.
         _retriever = HybridRetriever(store, embed_fn=None)
@@ -67,7 +67,9 @@ def get_retriever_instance(enable_embeddings: bool = False):
 
         _embedder_attempted = True
         try:
-            from knowledge_index.indexer import create_sentence_transformer_embedder
+            from unreal_agent.knowledge_index.indexer import (
+                create_sentence_transformer_embedder,
+            )
 
             _retriever.embed_fn = create_sentence_transformer_embedder(
                 local_files_only=True

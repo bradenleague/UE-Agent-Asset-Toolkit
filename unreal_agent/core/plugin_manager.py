@@ -55,11 +55,12 @@ def _discover_plugins():
                 mount_point = os.path.basename(os.path.dirname(root))
                 if mount_point not in _plugin_paths:
                     _plugin_paths[mount_point] = root
-                    if getattr(sys.modules.get("core.config"), "DEBUG", False):
+                    if DEBUG:
                         print(
                             f"[DEBUG] Found plugin: {mount_point} -> {root}",
                             file=sys.stderr,
                         )
+
 
 def get_plugin_paths() -> dict[str, str]:
     """Get discovered plugin mount points and their content paths."""

@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "unreal": {
+      "command": "unreal-agent-mcp"
+    }
+  }
+}
