@@ -77,9 +77,14 @@ def _asset_path_to_file(asset_path: str) -> str:
 
     if asset_path.startswith("/Game/"):
         relative_path = asset_path[6:]
-        return os.path.join(
-            os.path.dirname(PROJECT), "Content", relative_path + ".uasset"
-        )
+        base = os.path.join(os.path.dirname(PROJECT), "Content")
+        uasset_path = os.path.join(base, relative_path + ".uasset")
+        if os.path.exists(uasset_path):
+            return uasset_path
+        umap_path = os.path.join(base, relative_path + ".umap")
+        if os.path.exists(umap_path):
+            return umap_path
+        return uasset_path  # default fallback
 
     if asset_path.startswith("/") and not asset_path.startswith("/Script/"):
         _discover_plugins()
@@ -88,9 +93,17 @@ def _asset_path_to_file(asset_path: str) -> str:
             mount_point = parts[1]
             if mount_point in _plugin_paths:
                 relative_path = "/".join(parts[2:])
-                return os.path.join(
+                uasset_path = os.path.join(
                     _plugin_paths[mount_point], relative_path + ".uasset"
                 )
+                if os.path.exists(uasset_path):
+                    return uasset_path
+                umap_path = os.path.join(
+                    _plugin_paths[mount_point], relative_path + ".umap"
+                )
+                if os.path.exists(umap_path):
+                    return umap_path
+                return uasset_path  # default fallback
 
     return asset_path
 
@@ -230,8 +243,10 @@ def _list_assets_filesystem(
     if not os.path.exists(content_dir):
         return json.dumps({"error": f"Path not found: {content_dir}"})
 
-    pattern = os.path.join(content_dir, "**", "*.uasset")
-    files = globmod.glob(pattern, recursive=True)
+    files = []
+    for ext in ("*.uasset", "*.umap"):
+        pattern = os.path.join(content_dir, "**", ext)
+        files.extend(globmod.glob(pattern, recursive=True))
 
     results = []
     skipped_uncertain = 0
@@ -243,8 +258,16 @@ def _list_assets_filesystem(
 
     for file_path in files:
         rel_path = os.path.relpath(file_path, os.path.join(project_dir, "Content"))
-        asset_path = "/Game/" + to_game_path_sep(rel_path).replace(".uasset", "")
-        asset_name = os.path.basename(file_path).replace(".uasset", "")
+        asset_path = "/Game/" + to_game_path_sep(rel_path)
+        for ext in (".uasset", ".umap"):
+            if asset_path.endswith(ext):
+                asset_path = asset_path[: -len(ext)]
+                break
+        asset_name = os.path.basename(file_path)
+        for ext in (".uasset", ".umap"):
+            if asset_name.endswith(ext):
+                asset_name = asset_name[: -len(ext)]
+                break
 
         asset_class = None
 
@@ -349,8 +372,10 @@ def list_asset_folders(path: str = "/Game") -> str:
     for item in os.listdir(content_dir):
         item_path = os.path.join(content_dir, item)
         if os.path.isdir(item_path):
-            pattern = os.path.join(item_path, "**", "*.uasset")
-            asset_count = len(globmod.glob(pattern, recursive=True))
+            asset_count = 0
+            for ext in ("*.uasset", "*.umap"):
+                pattern = os.path.join(item_path, "**", ext)
+                asset_count += len(globmod.glob(pattern, recursive=True))
             folders.append(
                 {
                     "name": item,
@@ -358,7 +383,7 @@ def list_asset_folders(path: str = "/Game") -> str:
                     "asset_count": asset_count,
                 }
             )
-        elif item.endswith(".uasset"):
+        elif item.endswith((".uasset", ".umap")):
             direct_assets += 1
 
     folders.sort(key=lambda x: x["asset_count"], reverse=True)

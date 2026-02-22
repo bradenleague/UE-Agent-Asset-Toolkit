@@ -113,3 +113,62 @@ def test_mcp_short_keyword_semantic_mode_uses_exact_query_type(monkeypatch):
 
     assert result["search_type"] == "semantic"
     assert dummy_retriever.kwargs["query_type"] == "exact"
+
+
+# --- _classify_query unit tests ---
+
+_test_prefixes = search_engine._ENGINE_PREFIXES + ["LAS_", "GCN_"]
+
+
+class TestClassifyQuery:
+    def test_trailing_underscore_prefix_routes_to_name(self):
+        assert search_engine._classify_query("LAS_", _test_prefixes) == "name"
+
+    def test_engine_prefix_routes_to_name(self):
+        assert search_engine._classify_query("BP_Player", _test_prefixes) == "name"
+
+    def test_profile_prefix_routes_to_name(self):
+        assert (
+            search_engine._classify_query("LAS_StandardHUD", _test_prefixes) == "name"
+        )
+
+    def test_path_routes_to_name(self):
+        assert (
+            search_engine._classify_query("/Game/UI/Widget", _test_prefixes) == "name"
+        )
+
+    def test_script_path_does_not_route_to_name(self):
+        result = search_engine._classify_query("/Script/Engine.Actor", _test_prefixes)
+        assert result != "name"
+
+    def test_where_used_routes_to_refs(self):
+        assert (
+            search_engine._classify_query("where is BP_Player used", _test_prefixes)
+            == "refs"
+        )
+
+    def test_where_placed_routes_to_refs(self):
+        assert (
+            search_engine._classify_query("where is BP_Enemy placed", _test_prefixes)
+            == "refs"
+        )
+
+    def test_inherits_routes_to_inherits(self):
+        assert (
+            search_engine._classify_query("classes extending Character", _test_prefixes)
+            == "inherits"
+        )
+
+    def test_natural_language_routes_to_semantic(self):
+        assert (
+            search_engine._classify_query(
+                "explain the inventory system", _test_prefixes
+            )
+            == "semantic"
+        )
+
+    def test_dotted_pascal_case_routes_to_tags(self):
+        assert (
+            search_engine._classify_query("Input.Movement", _test_prefixes)
+            == "tags_candidate"
+        )

@@ -87,7 +87,7 @@ class TestLoadProfile:
         profile = load_profile("_defaults")
         assert profile.profile_name == "_defaults"
         assert "GameFeatureData" in profile.export_class_reclassify
-        assert profile.name_prefixes == {"GE_": "GameplayEffect"}
+        assert profile.name_prefixes == {"GE_": "GameplayEffect", "L_": "World"}
         assert profile.semantic_types == ["GameplayEffect"]
 
     def test_lyra_profile(self):
@@ -150,7 +150,7 @@ class TestGetParserTypeConfig:
         config = get_parser_type_config(profile)
         assert "export_class_reclassify" in config
         assert "name_prefixes" in config
-        assert config["name_prefixes"] == {"GE_": "GameplayEffect"}
+        assert config["name_prefixes"] == {"GE_": "GameplayEffect", "L_": "World"}
 
 
 # ---------------------------------------------------------------------------

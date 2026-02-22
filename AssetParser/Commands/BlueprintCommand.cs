@@ -413,7 +413,65 @@ namespace AssetParser.Commands
                     xml.AppendLine($"    <!-- and {variables.Count - 30} more -->");
                 xml.AppendLine("  </variables>");
             }
-        
+
+            // CDO (Class Default Object) — surface default property values
+            var cdoExport = asset.Exports
+                .OfType<NormalExport>()
+                .FirstOrDefault(e => e.ObjectName.ToString().StartsWith("Default__"));
+
+            if (cdoExport?.Data != null && cdoExport.Data.Count > 0)
+            {
+                var skipProps = new HashSet<string> {
+                    "UberGraphFramePointerProperty", "UberGraphFrame",
+                    "DefaultSceneRoot", "bNetAddressable",
+                    "CreationMethod", "bReplicates",
+                };
+
+                var cdoProps = cdoExport.Data
+                    .Where(p => {
+                        var name = p.Name.ToString();
+                        return !string.IsNullOrEmpty(name)
+                            && name != "None"
+                            && !skipProps.Contains(name)
+                            && !name.StartsWith("bpv__");
+                    })
+                    .Take(50)
+                    .ToList();
+
+                if (cdoProps.Count > 0)
+                {
+                    xml.AppendLine("  <defaults>");
+                    foreach (var prop in cdoProps)
+                    {
+                        var propName = prop.Name.ToString();
+                        var propType = prop.PropertyType.ToString();
+                        var propValue = GetPropertyValue(prop, 0);
+
+                        string valueStr;
+                        if (propValue is string s)
+                            valueStr = s;
+                        else if (propValue is bool b)
+                            valueStr = b.ToString().ToLower();
+                        else if (propValue is int or long or float or double)
+                            valueStr = propValue.ToString() ?? "";
+                        else
+                        {
+                            try {
+                                valueStr = JsonSerializer.Serialize(propValue,
+                                    new JsonSerializerOptions { WriteIndented = false });
+                            } catch {
+                                valueStr = propValue?.ToString() ?? "[complex]";
+                            }
+                        }
+
+                        xml.AppendLine($"    <property name=\"{EscapeXml(propName)}\" type=\"{EscapeXml(propType)}\">{EscapeXml(valueStr)}</property>");
+                    }
+                    if (cdoExport.Data.Count > 50)
+                        xml.AppendLine($"    <!-- and {cdoExport.Data.Count - 50} more -->");
+                    xml.AppendLine("  </defaults>");
+                }
+            }
+
             xml.AppendLine("</blueprint>");
             Console.WriteLine(xml.ToString());
         }

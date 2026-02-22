@@ -497,17 +497,32 @@ class AssetIndexer:
 
         # Collect assets from all content roots
         assets = []
-        pattern = "**/*.uasset" if recursive else "*.uasset"
 
         # Main content folder
         fs_path = self._game_path_to_fs(folder_path)
         if fs_path.exists():
-            assets.extend(fs_path.glob(pattern))
+            if recursive:
+                for dirpath, dirnames, filenames in os.walk(fs_path):
+                    for f in filenames:
+                        if f.endswith((".uasset", ".umap")):
+                            assets.append(Path(dirpath) / f)
+            else:
+                for f in os.listdir(fs_path):
+                    if f.endswith((".uasset", ".umap")):
+                        assets.append(fs_path / f)
 
         # Plugin content folders (if configured)
         for mount_point, plugin_content in self.plugin_paths.items():
             if plugin_content.exists():
-                assets.extend(plugin_content.glob(pattern))
+                if recursive:
+                    for dirpath, dirnames, filenames in os.walk(plugin_content):
+                        for f in filenames:
+                            if f.endswith((".uasset", ".umap")):
+                                assets.append(Path(dirpath) / f)
+                else:
+                    for f in os.listdir(plugin_content):
+                        if f.endswith((".uasset", ".umap")):
+                            assets.append(plugin_content / f)
 
         assets = list(assets)
         stats["total_found"] = len(assets)
@@ -640,16 +655,17 @@ class AssetIndexer:
             last_update = 0
             update_interval = 1000 if _is_tty else 10000
 
-            if exclude_patterns and recursive:
+            if recursive:
                 # os.walk with in-place pruning — skips excluded subtrees entirely
                 for dirpath, dirnames, filenames in os.walk(path):
-                    dirnames[:] = [
-                        d
-                        for d in dirnames
-                        if not any(pat in d for pat in exclude_patterns)
-                    ]
+                    if exclude_patterns:
+                        dirnames[:] = [
+                            d
+                            for d in dirnames
+                            if not any(pat in d for pat in exclude_patterns)
+                        ]
                     for f in filenames:
-                        if f.endswith(".uasset"):
+                        if f.endswith((".uasset", ".umap")):
                             found.append(Path(dirpath) / f)
                             if len(found) - last_update >= update_interval:
                                 if _is_tty:
@@ -663,20 +679,20 @@ class AssetIndexer:
                                 sys.stderr.flush()
                                 last_update = len(found)
             else:
-                walker = path.rglob("*.uasset") if recursive else path.glob("*.uasset")
-                for asset in walker:
-                    found.append(asset)
-                    if len(found) - last_update >= update_interval:
-                        if _is_tty:
-                            sys.stderr.write(
-                                f"\r  Scanning {label}... {len(found):,} files found"
-                            )
-                        else:
-                            sys.stderr.write(
-                                f"  Scanning {label}... {len(found):,} files found\n"
-                            )
-                        sys.stderr.flush()
-                        last_update = len(found)
+                for f in os.listdir(path):
+                    if f.endswith((".uasset", ".umap")):
+                        found.append(path / f)
+                        if len(found) - last_update >= update_interval:
+                            if _is_tty:
+                                sys.stderr.write(
+                                    f"\r  Scanning {label}... {len(found):,} files found"
+                                )
+                            else:
+                                sys.stderr.write(
+                                    f"  Scanning {label}... {len(found):,} files found\n"
+                                )
+                            sys.stderr.flush()
+                            last_update = len(found)
 
             # Clear the line (TTY only — non-TTY already emitted newlines)
             if last_update > 0 and _is_tty:
@@ -3838,6 +3854,10 @@ class AssetIndexer:
                 fs_path = plugin_content / path
                 if not fs_path.suffix and not fs_path.is_dir():
                     fs_path = fs_path.with_suffix(".uasset")
+                    if not fs_path.exists():
+                        umap_path = fs_path.with_suffix(".umap")
+                        if umap_path.exists():
+                            fs_path = umap_path
                 return fs_path
 
         # Default: /Game/UI/Widget -> Content/UI/Widget.uasset
@@ -3846,6 +3866,10 @@ class AssetIndexer:
         # Only add .uasset if it's not a directory and doesn't have a suffix
         if not fs_path.suffix and not fs_path.is_dir():
             fs_path = fs_path.with_suffix(".uasset")
+            if not fs_path.exists():
+                umap_path = fs_path.with_suffix(".umap")
+                if umap_path.exists():
+                    fs_path = umap_path
         return fs_path
 
     def _fs_to_game_path(self, fs_path: Path) -> str:
@@ -3855,8 +3879,10 @@ class AssetIndexer:
             try:
                 rel = fs_path.relative_to(plugin_content)
                 game_path = f"/{mount_point}/" + to_game_path_sep(str(rel))
-                if game_path.endswith(".uasset"):
-                    game_path = game_path[:-7]
+                for ext in (".uasset", ".umap"):
+                    if game_path.endswith(ext):
+                        game_path = game_path[: -len(ext)]
+                        break
                 return game_path
             except ValueError:
                 continue
@@ -3865,8 +3891,10 @@ class AssetIndexer:
         try:
             rel = fs_path.relative_to(self.content_path)
             game_path = "/Game/" + to_game_path_sep(str(rel))
-            if game_path.endswith(".uasset"):
-                game_path = game_path[:-7]
+            for ext in (".uasset", ".umap"):
+                if game_path.endswith(ext):
+                    game_path = game_path[: -len(ext)]
+                    break
             return game_path
         except ValueError:
             return str(fs_path)

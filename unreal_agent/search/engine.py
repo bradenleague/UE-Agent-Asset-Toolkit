@@ -21,6 +21,48 @@ from .trace import (
     should_try_tag_search,
 )
 
+_ENGINE_PREFIXES = [
+    "BP_",
+    "B_",
+    "ABP_",
+    "WBP_",
+    "W_",
+    "M_",
+    "MI_",
+    "MF_",
+    "DT_",
+    "DA_",
+    "SK_",
+    "SM_",
+    "T_",
+    "A_",
+    "GA_",
+    "GE_",
+    "GCN_",
+]
+
+_PREFIX_QUERY_RE = re.compile(r"^[A-Z][A-Za-z0-9]*_$")
+
+_profile_prefixes_cache: list[str] | None = None
+
+
+def _get_profile_prefixes() -> list[str]:
+    global _profile_prefixes_cache
+    if _profile_prefixes_cache is None:
+        try:
+            from .retriever import get_profile
+
+            profile = get_profile()
+            _profile_prefixes_cache = list(profile.name_prefixes.keys())
+        except Exception:
+            _profile_prefixes_cache = []
+    return _profile_prefixes_cache
+
+
+def _all_prefixes() -> list[str]:
+    return _ENGINE_PREFIXES + _get_profile_prefixes()
+
+
 _INHERITS_RE = re.compile(
     r"(?:what\s+)?(?:inherits?\s+from|subclass(?:es)?\s+of|children\s+of|class(?:es)?\s+extending)\s+(.+)",
     re.IGNORECASE,
@@ -77,6 +119,34 @@ def _normalize_inherits_target_token(token: str) -> tuple[str, str]:
     return normalized, bare_name
 
 
+def _classify_query(
+    query: str,
+    all_prefixes: list[str],
+    has_tag_results: bool = False,
+) -> str:
+    """Classify a search query into a search mode. Pure function for testability.
+
+    Returns: "inherits", "trace", "name", "refs", "tags_candidate", or "semantic"
+    """
+    if _extract_inherits_target(query):
+        return "inherits"
+    if extract_trace_target(query):
+        return "trace"
+    if query.startswith("/") and not query.startswith("/Script/"):
+        return "name"
+    if _PREFIX_QUERY_RE.match(query):
+        return "name"
+    if any(query.upper().startswith(p) for p in all_prefixes):
+        return "name"
+    if "where" in query.lower() and (
+        "used" in query.lower() or "placed" in query.lower()
+    ):
+        return "refs"
+    if should_try_tag_search(query):
+        return "tags_candidate"
+    return "semantic"
+
+
 def unreal_search(
     query: str,
     search_type: str = "auto",
@@ -122,48 +192,14 @@ def unreal_search(
         query_mode = "tags"
 
     if search_type == "auto" and query_mode != "tags":
-        if _extract_inherits_target(query):
-            query_mode = "inherits"
-        elif extract_trace_target(query):
-            query_mode = "trace"
-        elif query.startswith("/") and not query.startswith("/Script/"):
-            query_mode = "name"
-        elif any(
-            query.upper().startswith(p)
-            for p in [
-                "BP_",
-                "B_",
-                "ABP_",
-                "WBP_",
-                "W_",
-                "M_",
-                "MI_",
-                "MF_",
-                "DT_",
-                "DA_",
-                "SK_",
-                "SM_",
-                "T_",
-                "A_",
-                "GA_",
-                "GE_",
-                "GCN_",
-            ]
-        ):
-            query_mode = "name"
-        elif "where" in query.lower() and (
-            "used" in query.lower() or "placed" in query.lower()
-        ):
-            query_mode = "refs"
-        elif should_try_tag_search(query):
+        query_mode = _classify_query(query, _all_prefixes())
+        if query_mode == "tags_candidate":
             tag_results = store.search_by_tag(query, limit=limit)
             if tag_results:
                 tag_query = query
                 query_mode = "tags"
             else:
                 query_mode = "semantic"
-        else:
-            query_mode = "semantic"
 
     type_filters = None
     trace_payload = None
@@ -271,8 +307,12 @@ def unreal_search(
             finally:
                 conn.close()
         else:
+            _ref_pattern = (
+                "|".join(re.escape(p) + r"\w+" for p in _all_prefixes())
+                + r"|/Game/[\w/.-]+"
+            )
             match = re.search(
-                r"(BP_\w+|B_\w+|WBP_\w+|W_\w+|M_\w+|MI_\w+|MF_\w+|DT_\w+|DA_\w+|ABP_\w+|SK_\w+|SM_\w+|T_\w+|A_\w+|GA_\w+|GE_\w+|GCN_\w+|/Game/[\w/.-]+)",
+                f"({_ref_pattern})",
                 query,
                 re.IGNORECASE,
             )

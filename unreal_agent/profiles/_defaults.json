@@ -9,7 +9,8 @@
     "GameSettingVisualData": "DataAsset"
   },
   "name_prefixes": {
-    "GE_": "GameplayEffect"
+    "GE_": "GameplayEffect",
+    "L_": "World"
   },
   "semantic_types": ["GameplayEffect"],
   "game_feature_types": ["GameFeatureData"],

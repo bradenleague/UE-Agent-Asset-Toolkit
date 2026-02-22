@@ -1,5 +1,6 @@
 from typing import Optional
 
+
 def _guess_asset_type_from_name(asset_name: str, file_path: str) -> Optional[str]:
     """Fast heuristic to guess asset type from naming conventions.
 
@@ -8,6 +9,9 @@ def _guess_asset_type_from_name(asset_name: str, file_path: str) -> Optional[str
     """
     name_lower = asset_name.lower()
     path_lower = file_path.lower()
+
+    if file_path.endswith(".umap"):
+        return "World"
 
     if "_builtdata" in name_lower:
         return "_BuiltData"
