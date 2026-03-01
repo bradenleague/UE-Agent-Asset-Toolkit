@@ -354,10 +354,10 @@ namespace AssetParser.Commands
             return pin;
         }
         
-        public static void ExtractGraph(UAsset asset, string outputFormat)
+        public static GraphData BuildGraphData(UAsset asset)
         {
             var nameMap = asset.GetNameMapIndexList();
-        
+
             // --- Node identity lookup table ---
             // Maps K2Node type → property names to check for a human-readable target label
             var nodeTargetProps = new Dictionary<string, string[]>
@@ -373,16 +373,16 @@ namespace AssetParser.Commands
                 ["K2Node_CallDelegate"] = new[] { "DelegateReference" },
                 ["K2Node_CreateDelegate"] = new[] { "SelectedFunctionName" },
             };
-        
+
             string ResolveNodeTarget(NormalExport node, string nodeType)
             {
                 if (!nodeTargetProps.TryGetValue(nodeType, out var propNames)) return null;
-        
+
                 foreach (var propName in propNames)
                 {
                     var prop = node.Data?.FirstOrDefault(p => p.Name.ToString() == propName);
                     if (prop == null) continue;
-        
+
                     // For struct properties (FunctionReference, VariableReference, etc.)
                     // look for MemberName inside
                     if (prop is StructPropertyData structProp)
@@ -419,7 +419,7 @@ namespace AssetParser.Commands
                 }
                 return null;
             }
-        
+
             // --- Build indices ---
             // Map export index (1-based) → K2Node export
             var k2Nodes = new Dictionary<int, NormalExport>();
@@ -427,19 +427,19 @@ namespace AssetParser.Commands
             var edGraphs = new Dictionary<int, string>();
             // Map PinId GUID → (export index, pin name) for connection resolution
             var pinGuidMap = new Dictionary<Guid, (int exportIndex, string pinName)>();
-        
+
             for (int i = 0; i < asset.Exports.Count; i++)
             {
                 var export = asset.Exports[i] as NormalExport;
                 if (export == null) continue;
-        
+
                 var classType = export.GetExportClassType()?.ToString() ?? "";
                 if (classType.StartsWith("K2Node_") || classType == "K2Node")
                     k2Nodes[i + 1] = export;
                 else if (classType == "EdGraph")
                     edGraphs[i + 1] = export.ObjectName.ToString();
             }
-        
+
             // Group K2Nodes by parent EdGraph
             var graphNodeGroups = new Dictionary<string, List<int>>(); // graph name → list of export indices
             foreach (var (idx, node) in k2Nodes)
@@ -450,12 +450,12 @@ namespace AssetParser.Commands
                     graphNodeGroups[graphName] = new List<int>();
                 graphNodeGroups[graphName].Add(idx);
             }
-        
+
             // --- Parse pins for all K2Nodes ---
             // Stores parsed pin data per export index
             var nodePins = new Dictionary<int, List<ParsedPin>>();
             var parseErrors = new List<object>();
-        
+
             foreach (var (idx, node) in k2Nodes)
             {
                 var extras = node.Extras;
@@ -464,12 +464,12 @@ namespace AssetParser.Commands
                     nodePins[idx] = new List<ParsedPin>();
                     continue;
                 }
-        
+
                 try
                 {
                     using var ms = new MemoryStream(extras);
                     using var reader = new BinaryReader(ms);
-        
+
                     int pinCount = reader.ReadInt32();
                     if (pinCount < 0 || pinCount > 500)
                     {
@@ -477,7 +477,7 @@ namespace AssetParser.Commands
                         nodePins[idx] = new List<ParsedPin>();
                         continue;
                     }
-        
+
                     var pins = new List<ParsedPin>();
                     for (int p = 0; p < pinCount; p++)
                     {
@@ -499,17 +499,17 @@ namespace AssetParser.Commands
                     nodePins[idx] = new List<ParsedPin>();
                 }
             }
-        
+
             // --- Identify Knot and inlineable nodes for graph compaction ---
             var knotNodeIds = new HashSet<int>();
             var inlineNodeIds = new HashSet<int>();
             // Maps (exportIndex, pinName) → compact inline string
             var inlineMap = new Dictionary<(int, string), string>();
-        
+
             foreach (var (idx, node) in k2Nodes)
             {
                 var classType = node.GetExportClassType()?.ToString() ?? "";
-        
+
                 if (classType == "K2Node_Knot")
                 {
                     knotNodeIds.Add(idx);
@@ -541,7 +541,7 @@ namespace AssetParser.Commands
                     }
                 }
             }
-        
+
             // Resolve Knot pass-throughs: follow chains of Knots to all real targets (handles fan-out)
             List<(int exportIndex, string pinName)> ResolveKnotTargets(int exportIdx, string pinName, HashSet<(int, Guid)>? visited = null)
             {
@@ -549,16 +549,16 @@ namespace AssetParser.Commands
                     return new List<(int, string)> { (exportIdx, pinName) };
                 if (!nodePins.TryGetValue(exportIdx, out var knotPins))
                     return new List<(int, string)>();
-        
+
                 // Find the pin we arrived at
                 var arrivedPin = knotPins.FirstOrDefault(p => p.Name == pinName);
                 if (arrivedPin.Name == null) return new List<(int, string)>();
-        
+
                 // Follow through to the OTHER direction pin (in→out, out→in)
                 var otherDir = arrivedPin.Direction == "in" ? "out" : "in";
                 var otherPin = knotPins.FirstOrDefault(p => p.Direction == otherDir);
                 if (otherPin.Name == null || otherPin.LinkedTo.Count == 0) return new List<(int, string)>();
-        
+
                 visited ??= new HashSet<(int, Guid)>();
                 var results = new List<(int, string)>();
                 foreach (var (nextNodeRef, nextPinGuid) in otherPin.LinkedTo)
@@ -569,56 +569,56 @@ namespace AssetParser.Commands
                 }
                 return results;
             }
-        
+
             // Asset name
             var bpExport = asset.Exports
                 .OfType<NormalExport>()
                 .FirstOrDefault(e => e.GetExportClassType()?.ToString()?.Contains("Blueprint") == true);
             var bpName = bpExport?.ObjectName.ToString()
                 ?? Path.GetFileNameWithoutExtension(ProgramContext.assetPath);
-        
+
             var functions = new List<GraphFunctionData>();
-        
+
             foreach (var (graphName, nodeIndices) in graphNodeGroups)
             {
                 var functionNodes = new List<GraphNodeData>();
-        
+
                 foreach (var nodeIdx in nodeIndices)
                 {
                     if (!k2Nodes.TryGetValue(nodeIdx, out var node)) continue;
                     if (!nodePins.TryGetValue(nodeIdx, out var pins)) continue;
                     if (knotNodeIds.Contains(nodeIdx) || inlineNodeIds.Contains(nodeIdx)) continue;
-        
+
                     var classType = node.GetExportClassType()?.ToString() ?? "";
                     var shortType = classType.StartsWith("K2Node_") ? classType.Substring(7) : classType;
                     var target = ResolveNodeTarget(node, classType);
-        
+
                     // Early-exit: skip nodes with zero connections and no meaningful pins
                     bool hasAnyConnection = pins.Any(p => p.LinkedTo.Count > 0);
                     if (!hasAnyConnection) continue;
-        
+
                     var nodePinsList = new List<GraphPinData>();
-        
+
                     foreach (var pin in pins)
                     {
                         // Skip hidden and orphaned pins
                         if (pin.IsHidden || pin.IsOrphaned) continue;
-        
+
                         // Skip self input pins with no connections (noise)
                         if (pin.Name == "self" && pin.Direction == "in" && pin.LinkedTo.Count == 0)
                             continue;
-        
+
                         // Skip unconnected pins with no user-set default (just node shape declarations)
                         if (pin.LinkedTo.Count == 0 && string.IsNullOrWhiteSpace(pin.DefaultValue))
                             continue;
-        
+
                         var pinData = new GraphPinData
                         {
                             Name = pin.Name,
                             Dir = pin.Direction,
                             Cat = pin.Category,
                         };
-        
+
                         if (!string.IsNullOrEmpty(pin.SubCategoryObject))
                             pinData.Sub = pin.SubCategoryObject;
                         if (pin.ContainerType == 1) pinData.Container = "array";
@@ -626,7 +626,7 @@ namespace AssetParser.Commands
                         else if (pin.ContainerType == 3) pinData.Container = "map";
                         if (!string.IsNullOrEmpty(pin.DefaultValue))
                             pinData.Default = pin.DefaultValue;
-        
+
                         // Resolve connections: follow through Knots, substitute inline refs
                         if (pin.LinkedTo.Count > 0)
                         {
@@ -638,7 +638,7 @@ namespace AssetParser.Commands
                                     targets.Add($"{linkedNodeRef}:{linkedPinGuid}");
                                     continue;
                                 }
-        
+
                                 // Follow through Knot nodes to find all real targets (handles fan-out)
                                 var finals = ResolveKnotTargets(resolved.exportIndex, resolved.pinName);
                                 foreach (var (finalIdx, finalPin) in finals)
@@ -653,10 +653,10 @@ namespace AssetParser.Commands
                             if (targets.Count > 0)
                                 pinData.To = targets;
                         }
-        
+
                         nodePinsList.Add(pinData);
                     }
-        
+
                     functionNodes.Add(new GraphNodeData
                     {
                         Id = nodeIdx,
@@ -665,7 +665,7 @@ namespace AssetParser.Commands
                         Pins = nodePinsList,
                     });
                 }
-        
+
                 if (functionNodes.Count > 0)
                 {
                     functions.Add(new GraphFunctionData
@@ -675,14 +675,19 @@ namespace AssetParser.Commands
                     });
                 }
             }
-        
-            var graphData = new GraphData
+
+            return new GraphData
             {
                 Name = bpName,
                 Functions = functions,
                 Errors = parseErrors.Count > 0 ? parseErrors : null,
             };
-        
+        }
+
+        public static void ExtractGraph(UAsset asset, string outputFormat)
+        {
+            var graphData = BuildGraphData(asset);
+
             if (outputFormat == "json")
             {
                 var options = new JsonSerializerOptions
@@ -694,25 +699,25 @@ namespace AssetParser.Commands
                 Console.Write(JsonSerializer.Serialize(graphData, options));
                 return;
             }
-        
+
             // XML output
             var xml = new System.Text.StringBuilder();
             xml.AppendLine("<graph>");
-            xml.AppendLine($"  <name>{EscapeXml(bpName)}</name>");
-        
-            foreach (var function in functions)
+            xml.AppendLine($"  <name>{EscapeXml(graphData.Name)}</name>");
+
+            foreach (var function in graphData.Functions)
             {
                 xml.AppendLine($"  <function name=\"{EscapeXml(function.Name)}\">");
                 foreach (var node in function.Nodes)
                 {
                     var targetAttr = !string.IsNullOrEmpty(node.Target) ? $" target=\"{EscapeXml(node.Target)}\"" : "";
                     xml.AppendLine($"    <node id=\"{node.Id}\" type=\"{EscapeXml(node.Type)}\"{targetAttr}>");
-        
+
                     foreach (var pin in node.Pins)
                     {
                         var attrs = new System.Text.StringBuilder();
                         attrs.Append($" name=\"{EscapeXml(pin.Name)}\" dir=\"{pin.Dir}\" cat=\"{EscapeXml(pin.Cat)}\"");
-        
+
                         if (!string.IsNullOrEmpty(pin.Sub))
                             attrs.Append($" sub=\"{EscapeXml(pin.Sub)}\"");
                         if (!string.IsNullOrEmpty(pin.Container))
@@ -721,25 +726,25 @@ namespace AssetParser.Commands
                             attrs.Append($" default=\"{EscapeXml(pin.Default)}\"");
                         if (pin.To != null && pin.To.Count > 0)
                             attrs.Append($" to=\"{EscapeXml(string.Join(",", pin.To))}\"");
-        
+
                         xml.AppendLine($"      <pin{attrs}/>");
                     }
-        
+
                     xml.AppendLine("    </node>");
                 }
                 xml.AppendLine("  </function>");
             }
-        
+
             // Parse errors as XML comments
-            if (parseErrors.Count > 0)
+            if (graphData.Errors != null && graphData.Errors.Count > 0)
             {
-                foreach (var err in parseErrors)
+                foreach (var err in graphData.Errors)
                 {
                     var errStr = JsonSerializer.Serialize(err);
                     xml.AppendLine($"  <!-- error: {EscapeXml(errStr)} -->");
                 }
             }
-        
+
             xml.AppendLine("</graph>");
             Console.Write(xml.ToString());
         }

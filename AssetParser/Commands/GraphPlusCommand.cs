@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using UAssetAPI;
 using UAssetAPI.ExportTypes;
@@ -15,6 +16,7 @@ using AssetParser.Parsers;
 using static AssetParser.Core.Helpers;
 using static AssetParser.Core.AssetRefHelper;
 using static AssetParser.Commands.GraphCommand;
+using static AssetParser.Commands.BlueprintCommand;
 using static AssetParser.Parsers.ControlFlowAnalyzer;
 using static AssetParser.Parsers.BytecodeAnalyzer;
 
@@ -106,37 +108,292 @@ namespace AssetParser.Commands
 
         public static void ExtractGraphPlusJson(UAsset asset)
         {
-            var options = new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            };
-
             var bpName = ResolveBlueprintName(asset);
-            var graphJson = TryCaptureGraphJson(asset, out var graphError);
+            var graphData = BuildGraphData(asset);
             var defaults = BuildCdoDefaults(asset);
             var members = ExtractMemberDeclarations(asset, defaults);
             var functions = ExtractFunctions(asset, out var signaturesByFunction);
-            var delegates = ExtractDelegates(asset, signaturesByFunction);
+            var delegateData = ExtractDelegates(asset, signaturesByFunction);
 
-            var output = new Dictionary<string, object?>
-            {
-                ["name"] = bpName,
-                ["detail"] = "graph",
-                ["contract"] = "graph_plus_v1",
-                ["graph"] = graphJson,
-                ["members"] = members,
-                ["functions"] = functions,
-                ["delegates"] = delegates,
-            };
+            var xml = new StringBuilder();
+            xml.AppendLine("<graph-plus contract=\"graph_compact_v1\">");
+            xml.AppendLine($"  <name>{EscapeXml(bpName)}</name>");
 
-            if (!string.IsNullOrWhiteSpace(graphError))
+            // --- Members ---
+            if (members.Count > 0)
             {
-                output["graph_error"] = graphError;
+                xml.AppendLine("  <members>");
+                foreach (var m in members)
+                {
+                    var name = m["name"]?.ToString() ?? "";
+                    var type = m["declared_type"]?.ToString() ?? "auto";
+                    var specifiers = m["specifiers"] as List<string>;
+                    var specAttr = specifiers != null && specifiers.Count > 0
+                        ? $" spec=\"{EscapeXml(string.Join(",", specifiers))}\""
+                        : "";
+                    var defaultValue = m.TryGetValue("default_value", out var dv) ? dv : null;
+
+                    if (defaultValue != null && !IsEmptyDefault(defaultValue))
+                    {
+                        xml.AppendLine($"    <m name=\"{EscapeXml(name)}\" type=\"{EscapeXml(type)}\"{specAttr}>");
+                        xml.AppendLine($"      <default>{EscapeXml(FormatDefault(defaultValue))}</default>");
+                        xml.AppendLine("    </m>");
+                    }
+                    else
+                    {
+                        xml.AppendLine($"    <m name=\"{EscapeXml(name)}\" type=\"{EscapeXml(type)}\"{specAttr}/>");
+                    }
+                }
+                xml.AppendLine("  </members>");
             }
 
-            Console.Write(JsonSerializer.Serialize(output, options));
+            // --- Functions ---
+            if (functions.Count > 0)
+            {
+                xml.AppendLine("  <functions>");
+                foreach (var f in functions)
+                {
+                    var fName = f["name"]?.ToString() ?? "";
+
+                    // Filter ExecuteUbergraph
+                    if (fName.StartsWith("ExecuteUbergraph", StringComparison.Ordinal))
+                        continue;
+
+                    var flagsMapped = f["flags_mapped"] as List<string> ?? new List<string>();
+                    var isEvent = f.TryGetValue("is_event", out var ie) && ie is bool b && b;
+                    var flagsStr = flagsMapped.Count > 0
+                        ? $" flags=\"{EscapeXml(string.Join(",", flagsMapped))}\""
+                        : "";
+                    var eventAttr = isEvent ? " event=\"true\"" : "";
+                    var fParams = f["params"] as List<Dictionary<string, object?>> ?? new();
+                    var fReturn = f["return"] as Dictionary<string, object?>;
+
+                    if (fParams.Count == 0 && fReturn == null)
+                    {
+                        xml.AppendLine($"    <fn name=\"{EscapeXml(fName)}\"{flagsStr}{eventAttr}/>");
+                    }
+                    else
+                    {
+                        xml.AppendLine($"    <fn name=\"{EscapeXml(fName)}\"{flagsStr}{eventAttr}>");
+                        foreach (var p in fParams)
+                        {
+                            var pName = p["name"]?.ToString() ?? "";
+                            var pType = p["declared_type"]?.ToString() ?? "auto";
+                            var pDir = p["direction"]?.ToString() ?? "in";
+                            xml.AppendLine($"      <param name=\"{EscapeXml(pName)}\" type=\"{EscapeXml(pType)}\" dir=\"{pDir}\"/>");
+                        }
+                        if (fReturn != null)
+                        {
+                            var rType = fReturn["declared_type"]?.ToString() ?? "auto";
+                            xml.AppendLine($"      <param name=\"ReturnValue\" type=\"{EscapeXml(rType)}\" dir=\"return\"/>");
+                        }
+                        xml.AppendLine("    </fn>");
+                    }
+                }
+                xml.AppendLine("  </functions>");
+            }
+
+            // --- Delegates ---
+            var declarations = delegateData.TryGetValue("declarations", out var declObj)
+                ? declObj as List<Dictionary<string, object?>> ?? new()
+                : new();
+            var bindings = delegateData.TryGetValue("bindings", out var bindObj)
+                ? bindObj as List<Dictionary<string, object?>> ?? new()
+                : new();
+
+            if (declarations.Count > 0 || bindings.Count > 0)
+            {
+                xml.AppendLine("  <delegates>");
+                foreach (var d in declarations)
+                {
+                    var dName = d["name"]?.ToString() ?? "";
+                    var kind = d["kind"]?.ToString() ?? "delegate";
+                    var sig = d["signature"] as Dictionary<string, object?>;
+                    var sigParams = sig != null && sig.TryGetValue("params", out var sp)
+                        ? sp as List<Dictionary<string, object?>> ?? new()
+                        : new();
+
+                    if (sigParams.Count == 0)
+                    {
+                        xml.AppendLine($"    <decl name=\"{EscapeXml(dName)}\" kind=\"{kind}\"/>");
+                    }
+                    else
+                    {
+                        xml.AppendLine($"    <decl name=\"{EscapeXml(dName)}\" kind=\"{kind}\">");
+                        foreach (var p in sigParams)
+                        {
+                            var pName = p["name"]?.ToString() ?? "";
+                            var pType = p["declared_type"]?.ToString() ?? "auto";
+                            var pDir = p["direction"]?.ToString() ?? "in";
+                            xml.AppendLine($"      <param name=\"{EscapeXml(pName)}\" type=\"{EscapeXml(pType)}\" dir=\"{pDir}\"/>");
+                        }
+                        xml.AppendLine("    </decl>");
+                    }
+                }
+                foreach (var b in bindings)
+                {
+                    var owner = b["owner_function"]?.ToString() ?? "";
+                    var op = b["operation"]?.ToString() ?? "";
+                    var target = b["delegate_target"]?.ToString() ?? "";
+                    var fn = b["bound_function"]?.ToString() ?? "";
+                    var fnAttr = !string.IsNullOrEmpty(fn) ? $" fn=\"{EscapeXml(fn)}\"" : "";
+                    xml.AppendLine($"    <bind owner=\"{EscapeXml(owner)}\" op=\"{EscapeXml(op)}\" target=\"{EscapeXml(target)}\"{fnAttr}/>");
+                }
+                xml.AppendLine("  </delegates>");
+            }
+
+            // --- Graph (compact XML with short IDs) ---
+            if (graphData.Functions.Count > 0)
+            {
+                // Build short ID map: export index → N1, N2, ...
+                var idMap = new Dictionary<int, string>();
+                int nextId = 1;
+                foreach (var gf in graphData.Functions)
+                {
+                    foreach (var node in gf.Nodes)
+                    {
+                        idMap[node.Id] = $"N{nextId++}";
+                    }
+                }
+
+                xml.AppendLine("  <graph>");
+                foreach (var gf in graphData.Functions)
+                {
+                    // Filter ExecuteUbergraph graphs
+                    if (gf.Name.StartsWith("ExecuteUbergraph", StringComparison.Ordinal))
+                        continue;
+
+                    xml.AppendLine($"    <fn name=\"{EscapeXml(gf.Name)}\">");
+                    foreach (var node in gf.Nodes)
+                    {
+                        var shortId = idMap.TryGetValue(node.Id, out var sid) ? sid : $"N{node.Id}";
+                        var targetAttr = !string.IsNullOrEmpty(node.Target) ? $" target=\"{EscapeXml(node.Target)}\"" : "";
+                        var inPins = node.Pins.Where(p => p.Dir == "in").ToList();
+                        var outPins = node.Pins.Where(p => p.Dir == "out").ToList();
+
+                        if (inPins.Count == 0 && outPins.Count == 0)
+                        {
+                            xml.AppendLine($"      <N id=\"{shortId}\" type=\"{EscapeXml(node.Type)}\"{targetAttr}/>");
+                            continue;
+                        }
+
+                        xml.AppendLine($"      <N id=\"{shortId}\" type=\"{EscapeXml(node.Type)}\"{targetAttr}>");
+
+                        if (inPins.Count > 0)
+                        {
+                            xml.AppendLine("        <in>");
+                            foreach (var pin in inPins)
+                                RenderCompactPin(xml, pin, idMap, isOutput: false);
+                            xml.AppendLine("        </in>");
+                        }
+                        if (outPins.Count > 0)
+                        {
+                            xml.AppendLine("        <out>");
+                            foreach (var pin in outPins)
+                                RenderCompactPin(xml, pin, idMap, isOutput: true);
+                            xml.AppendLine("        </out>");
+                        }
+
+                        xml.AppendLine("      </N>");
+                    }
+                    xml.AppendLine("    </fn>");
+                }
+
+                // Graph errors as XML comments
+                if (graphData.Errors != null && graphData.Errors.Count > 0)
+                {
+                    foreach (var err in graphData.Errors)
+                    {
+                        var errStr = JsonSerializer.Serialize(err);
+                        xml.AppendLine($"    <!-- error: {EscapeXml(errStr)} -->");
+                    }
+                }
+
+                xml.AppendLine("  </graph>");
+            }
+
+            xml.AppendLine("</graph-plus>");
+            Console.Write(xml.ToString());
+        }
+
+        private static void RenderCompactPin(
+            StringBuilder xml,
+            GraphPinData pin,
+            Dictionary<int, string> idMap,
+            bool isOutput)
+        {
+            var attrs = new StringBuilder();
+            attrs.Append($" name=\"{EscapeXml(pin.Name)}\"");
+
+            // Omit cat when exec
+            if (!string.IsNullOrEmpty(pin.Cat) && pin.Cat != "exec")
+                attrs.Append($" cat=\"{EscapeXml(pin.Cat)}\"");
+
+            if (!string.IsNullOrEmpty(pin.Sub))
+                attrs.Append($" sub=\"{EscapeXml(pin.Sub)}\"");
+            if (!string.IsNullOrEmpty(pin.Container))
+                attrs.Append($" container=\"{pin.Container}\"");
+
+            // Default value: skip if matches AutoDefault (handled upstream in GraphCommand)
+            if (!string.IsNullOrEmpty(pin.Default))
+                attrs.Append($" default=\"{EscapeXml(pin.Default)}\"");
+
+            // Connections: output pins get `to`, input pins only get inline refs (var:X, self)
+            if (pin.To != null && pin.To.Count > 0)
+            {
+                var rewritten = pin.To.Select(t => RewriteConnection(t, idMap)).ToList();
+                if (isOutput)
+                {
+                    attrs.Append($" to=\"{EscapeXml(string.Join(",", rewritten))}\"");
+                }
+                else
+                {
+                    // Input pins: only emit inline refs (var:, self)
+                    var inlineRefs = rewritten.Where(r => r.StartsWith("var:", StringComparison.Ordinal) || r == "self").ToList();
+                    if (inlineRefs.Count > 0)
+                        attrs.Append($" to=\"{EscapeXml(string.Join(",", inlineRefs))}\"");
+                }
+            }
+
+            xml.AppendLine($"          <p{attrs}/>");
+        }
+
+        private static string RewriteConnection(string connection, Dictionary<int, string> idMap)
+        {
+            // Inline refs pass through unchanged
+            if (connection.StartsWith("var:", StringComparison.Ordinal) || connection == "self")
+                return connection;
+
+            // Format: "exportIndex:pinName" → "N{id}:pinName"
+            var colonIdx = connection.IndexOf(':');
+            if (colonIdx <= 0) return connection;
+
+            var indexPart = connection[..colonIdx];
+            var pinPart = connection[(colonIdx + 1)..];
+
+            if (int.TryParse(indexPart, out var exportIdx) && idMap.TryGetValue(exportIdx, out var shortId))
+                return $"{shortId}:{pinPart}";
+
+            return connection;
+        }
+
+        private static bool IsEmptyDefault(object? value)
+        {
+            if (value == null) return true;
+            if (value is string s) return string.IsNullOrWhiteSpace(s);
+            if (value is JsonElement je)
+            {
+                if (je.ValueKind == JsonValueKind.Null) return true;
+                if (je.ValueKind == JsonValueKind.String) return string.IsNullOrWhiteSpace(je.GetString());
+            }
+            return false;
+        }
+
+        private static string FormatDefault(object? value)
+        {
+            if (value == null) return "";
+            if (value is string s) return s;
+            return JsonSerializer.Serialize(value);
         }
 
         public static void ExtractGraphSummaryJson(UAsset asset)
@@ -176,39 +433,6 @@ namespace AssetParser.Commands
             return bpExport?.ObjectName.ToString()
                 ?? Path.GetFileNameWithoutExtension(ProgramContext.assetPath)
                 ?? "Unknown";
-        }
-
-        private static object? TryCaptureGraphJson(UAsset asset, out string? error)
-        {
-            error = null;
-            var originalOut = Console.Out;
-
-            try
-            {
-                using var capture = new StringWriter();
-                Console.SetOut(capture);
-                ExtractGraph(asset, "json");
-                Console.Out.Flush();
-
-                var raw = capture.ToString().Trim();
-                if (string.IsNullOrEmpty(raw))
-                {
-                    error = "graph-json capture was empty";
-                    return null;
-                }
-
-                using var doc = JsonDocument.Parse(raw);
-                return doc.RootElement.Clone();
-            }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                return null;
-            }
-            finally
-            {
-                Console.SetOut(originalOut);
-            }
         }
 
         private static Dictionary<string, object?> BuildCdoDefaults(UAsset asset)

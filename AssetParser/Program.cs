@@ -77,7 +77,7 @@ if (ProgramContext.args.Length < 2)
     Console.WriteLine("  blueprint <path>  - Extract Blueprint functions and variables");
     Console.WriteLine("  graph <path>      - Extract Blueprint node graph as XML");
     Console.WriteLine("  graph-json <path> - Extract Blueprint node graph as JSON");
-    Console.WriteLine("  graph-plus-json <path> - Extract enriched Blueprint graph JSON");
+    Console.WriteLine("  graph-plus-json <path> - Extract enriched Blueprint graph (compact XML)");
     Console.WriteLine("  graph-summary-json <path> - Extract Blueprint metadata (members, functions, delegates) without graph");
     Console.WriteLine("  bytecode <path>   - Extract bytecode control flow graph and pseudocode");
     Console.WriteLine("  material <path>   - Extract Material/MaterialInstance parameters");

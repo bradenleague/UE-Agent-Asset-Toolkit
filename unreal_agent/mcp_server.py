@@ -194,7 +194,7 @@ def inspect_asset(
     Args:
         path_or_query: Asset path (/Game/..., /PluginName/...) or search query if fuzzy=True
         fuzzy: If True, search for the asset first, then inspect top match
-        detail: For Blueprints: 'graph' (enriched graph metadata including K2 wiring, members, functions, delegates)
+        detail: For Blueprints: 'graph' (enriched graph as compact XML including K2 wiring, members, functions, delegates)
 
     Returns:
         Type-specific structured data about the asset
@@ -348,7 +348,7 @@ Returns type-specific structured data:
   - Material: parameters (scalar, vector, texture), domain, blend mode
   - DataTable: row structure, columns, sample data
 
-For Blueprints, use detail='graph' for enriched graph metadata (K2 node wiring, members, function flags, delegates/bindings), or detail='graph-summary' for lightweight metadata (members, functions, delegates) without the graph.
+For Blueprints, use detail='graph' for enriched graph metadata as compact XML (K2 node wiring, members, function flags, delegates/bindings), or detail='graph-summary' for lightweight metadata JSON (members, functions, delegates) without the graph.
 
 Use unreal_search first to find assets, then inspect_asset for details.""",
             inputSchema={
@@ -366,7 +366,7 @@ Use unreal_search first to find assets, then inspect_asset for details.""",
                     "detail": {
                         "type": "string",
                         "enum": ["graph", "graph-summary"],
-                        "description": "For Blueprints: 'graph' returns enriched graph metadata (K2 node wiring, members, function flags, delegates/bindings); 'graph-summary' returns lightweight metadata (members, functions, delegates) without the graph",
+                        "description": "For Blueprints: 'graph' returns enriched graph metadata as compact XML (K2 node wiring, members, function flags, delegates/bindings); 'graph-summary' returns lightweight metadata JSON (members, functions, delegates) without the graph",
                     },
                 },
                 "required": ["path_or_query"],
