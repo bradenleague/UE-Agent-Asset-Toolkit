@@ -5,6 +5,17 @@
 
 An MCP server that lets AI coding agents inspect Unreal Engine assets without launching the Editor. Parses `.uasset` binaries directly, builds a search index, and exposes two tools — `unreal_search` and `inspect_asset` — over MCP.
 
+### In Action (Lyra Starter Game)
+
+<p>
+  <a href="docs/images/hud-architecture.png"><img src="docs/images/hud-architecture.png" width="49%" alt="HUD architecture analysis"></a>
+  <a href="docs/images/widget-hierarchy.png"><img src="docs/images/widget-hierarchy.png" width="49%" alt="Widget hierarchy tree"></a>
+</p>
+<p>
+  <a href="docs/images/cpp-blueprint-mapping.png"><img src="docs/images/cpp-blueprint-mapping.png" width="49%" alt="C++ to Blueprint mapping"></a>
+  <a href="docs/images/gameplay-messages.png"><img src="docs/images/gameplay-messages.png" width="49%" alt="Gameplay message subsystem"></a>
+</p>
+
 ## Requirements
 
 - .NET 8 SDK or later (for the C# asset parser)
