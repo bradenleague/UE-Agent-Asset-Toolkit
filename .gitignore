@@ -1,0 +1,74 @@
+# Build outputs
+AssetParser/bin/
+AssetParser/obj/
+AssetParser.Tests/bin/
+AssetParser.Tests/obj/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+.coverage
+htmlcov/
+coverage.xml
+
+# User-specific config (use config.example.json as template)
+unreal_agent/config.json
+unreal_agent/local_config.json
+
+# Resolved profiles (auto-generated per project)
+unreal_agent/profiles/.resolved/
+
+# Semantic Index (auto-generated per project)
+*.db
+*.sqlite
+unreal_agent/data/
+knowledge_index.db
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.sln.docstates
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Windows reserved names (created accidentally)
+nul
+
+# Claude Code local settings (machine-specific paths)
+.claude/settings.local.json
+
+# MCP config (machine-specific paths)
+.mcp.json
+
+# Project-specific Claude instructions (use README.md for shared docs)
+CLAUDE.md
+
+# Test cache
+.pytest_cache/
+
+# Python virtual environment
+unreal_agent/.venv/

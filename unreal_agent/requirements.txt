@@ -1,0 +1,10 @@
+# Primary dependency management is in pyproject.toml.
+# Install with: pip install -e .
+# For embeddings: pip install -e ".[embeddings]"
+# For dev/testing: pip install -e ".[dev]"
+
+mcp>=1.0.0
+
+# Optional: embeddings for semantic search
+# sentence-transformers>=2.0.0
+# numpy>=1.20.0

@@ -1,0 +1,59 @@
+{
+  "profile_name": "lyra",
+  "export_class_reclassify": {
+    "GameFeatureData": "GameFeatureData",
+    "LyraExperienceActionSet": "LyraExperienceActionSet",
+    "LyraExperienceDefinition": "LyraExperienceDefinition",
+    "LyraUserFacingExperienceDefinition": "DataAsset",
+    "LyraAbilitySet": "DataAsset",
+    "LyraPawnData": "DataAsset",
+    "LyraInputConfig": "DataAsset",
+    "LyraContextEffectsLibrary": "DataAsset",
+    "LyraTeamDisplayAsset": "DataAsset",
+    "LyraGameData": "DataAsset",
+    "LyraAimSensitivityData": "DataAsset",
+    "GameSettingVisualData": "DataAsset",
+    "PrimaryAssetLabel": "DataAsset"
+  },
+  "name_prefixes": {
+    "LAS_": "LyraExperienceActionSet",
+    "EAS_": "LyraExperienceActionSet",
+    "TEAMDA_": "DataAsset",
+    "CFX_": "DataAsset",
+    "INPUTDATA_": "DataAsset"
+  },
+  "semantic_types": [
+    "LyraExperienceActionSet",
+    "LyraExperienceDefinition"
+  ],
+  "game_feature_types": [
+    "LyraExperienceActionSet",
+    "LyraExperienceDefinition"
+  ],
+  "blueprint_parent_redirects": {
+    "LyraExperienceDefinition": "LyraExperienceDefinition"
+  },
+  "data_asset_extractors": [
+    "LyraAbilitySet",
+    "LyraPawnData",
+    "LyraInputConfig",
+    "LyraUserFacingExperienceDefinition",
+    "LyraContextEffectsLibrary"
+  ],
+  "deep_ref_export_classes": [
+    "LyraExperienceActionSet",
+    "LyraExperienceDefinition",
+    "LyraUserFacingExperienceDefinition"
+  ],
+  "deep_ref_candidates": [
+    "ShooterCore",
+    "TopDownArena"
+  ],
+  "widget_rank_terms": [
+    "LyraHUDLayout"
+  ],
+  "widget_fallback_patterns": [
+    "%LyraHUDLayout%",
+    "%LyraHUD%"
+  ]
+}

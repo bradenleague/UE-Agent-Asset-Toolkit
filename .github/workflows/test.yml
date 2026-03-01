@@ -1,0 +1,53 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest --cov=unreal_agent --cov-report=xml --cov-report=term
+
+      - name: Smoke test - CLI entry point
+        run: unreal-agent-toolkit --help
+
+      - name: Smoke test - package import
+        run: python -c "from unreal_agent import __version__; print(__version__)"
+
+  assetparser-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build UAssetAPI (Release)
+        run: dotnet build UAssetAPI/UAssetAPI.sln -c Release
+
+      - name: Run AssetParser tests
+        run: dotnet test AssetParser.Tests/AssetParser.Tests.csproj -c Release --verbosity normal
